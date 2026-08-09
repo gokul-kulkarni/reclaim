@@ -1,0 +1,33 @@
+[package]
+name = "reclaim-core"
+description = "Core engine for reclaim: scanning, sizing, staleness scoring and safe deletion."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+jwalk.workspace = true
+rayon.workspace = true
+dashmap.workspace = true
+trash.workspace = true
+tracing.workspace = true
+directories.workspace = true
+glob.workspace = true
+humantime.workspace = true
+num_cpus.workspace = true
+uuid.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+rstest.workspace = true
+insta.workspace = true

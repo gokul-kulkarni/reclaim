@@ -1,0 +1,112 @@
+# reclaim configuration
+#
+# Written by `reclaim config init`. Every value here is the built-in default,
+# so deleting this file changes nothing. Edit what you care about.
+#
+# Precedence, lowest first: defaults -> this file -> RECLAIM_* env vars -> flags.
+
+[scan]
+# Directories crawled to find projects with build artifacts (node_modules,
+# target/, build/, .venv, ...). Leave empty to scan only the well-known global
+# caches, which is fast but misses the usual biggest wins.
+#   project_roots = ["~/dev", "~/work"]
+project_roots = []
+
+# Pruned during the project walk. Standard glob syntax.
+exclude = [
+    "**/Library/**",
+    "**/.Trash/**",
+    "**/.git/**",
+    "**/node_modules/**",
+    "**/.venv/**",
+    "**/Applications/**",
+]
+
+# How deep to descend below each project root.
+max_depth = 8
+
+# Worker threads. 0 = auto: min(cpus * 2, 16). This workload is metadata-bound,
+# so more threads than that queue on the filesystem rather than helping.
+concurrency = 0
+
+follow_symlinks = false
+
+# Whether the walk may cross onto another filesystem. Leave false unless you
+# know you want network shares and external disks included.
+cross_device = false
+
+[thresholds]
+# Candidates smaller than this are hidden, to keep the list readable.
+min_size = "50MB"
+
+# Baseline for the staleness factor in the reclaim score. Something untouched
+# for this long scores at 1.0; longer scales up to a cap of 3.0.
+stale_after_days = 60
+
+# Default age threshold per tier for `reclaim clean --tier X`.
+# The riskier the item, the longer we wait before suggesting it.
+[thresholds.per_tier]
+safe = 14
+review = 60
+caution = 180
+
+[delete]
+# tiered = purge Safe items (space is freed immediately) and Trash the rest.
+# trash  = everything is recoverable, but nothing is freed until you empty it.
+# purge  = everything is removed permanently.
+mode = "tiered"
+
+# Prompt for Caution items even when --yes is passed.
+confirm_caution = true
+
+# Added to the built-in protected list. Nothing can remove entries from that
+# list: /, /etc, $HOME itself, ~/.ssh, any path containing .git, and so on.
+protected_paths = ["~/Documents", "~/Desktop", "~/.ssh"]
+
+[providers]
+# "*" enables everything. Disabling accepts a full id ("apple.archives") or a
+# group prefix ("node"), which disables every provider in that group.
+enabled = ["*"]
+disabled = ["ml"]
+
+[providers.apple]
+# Simulator runtimes to keep, newest first.
+keep_latest_simulator_runtimes = 2
+# Offer tvOS/watchOS/visionOS runtimes for removal.
+offer_non_ios_runtimes = true
+
+[providers.node]
+# The pnpm store is hardlinked into every node_modules on this machine, so
+# deleting it breaks working installs for a small win. Set to false to include it.
+keep_pnpm_store = true
+offer_node_modules = true
+
+[providers.containers]
+# Named docker volumes hold databases and other state that exists nowhere else.
+include_volumes = false
+
+[ui]
+# 0 picks a free port.
+port = 0
+open_browser = true
+# auto | light | dark
+theme = "auto"
+
+[schedule]
+# Phase 2: background cleanup. Managed with `reclaim schedule install`.
+enabled = false
+
+# weekly | biweekly | monthly, or a five-field cron expression.
+cadence = "weekly"
+
+# Tiers a background run may touch. "caution" is rejected: a job running while
+# you are not watching never removes anything irreplaceable.
+tiers = ["safe"]
+
+older_than_days = 60
+
+# The first scheduled run only reports what it would have done.
+dry_run_first = true
+
+notify = true
+max_runtime_minutes = 30

@@ -1,0 +1,206 @@
+# reclaim
+
+Find and safely reclaim the disk space your toolchains leave behind.
+
+`reclaim` scans the caches and build artifacts left by Node, Python, Rust, JVM,
+Go, Xcode, Android, Docker, .NET, Ruby, PHP, Dart and friends — then tells you,
+for each one, **how stale it is**, **what it will cost you to get it back**, and
+**what could go wrong** if you delete it. It removes only what you choose.
+
+```
+Rust  (2.6 GB)
+     392 MB  review     2 years ago     rust toolchain: 1.52.1-aarch64-apple-darwin
+      ~/.rustup/toolchains/1.52.1-aarch64-apple-darwin  → re-download from static.rust-lang.org
+      ! Any project pinning `1.52.1-aarch64-apple-darwin` in rust-toolchain.toml
+        will not build until you reinstall it.
+
+JVM / Java  (391 MB)
+     246 MB  caution    9 months ago    Maven local repository
+      ~/.m2/repository  → gone forever
+      ! Found 23 artifact(s) with no `_remote.repositories` marker: these came from
+        `mvn install` and are not re-downloadable from any repository.
+```
+
+## Why not `du -sh` and `rm -rf`
+
+`du` tells you a directory is 12 GB. It does not tell you that you last touched it
+in March, that deleting the pnpm store breaks every `node_modules` on the machine,
+or that half of `~/.m2` was built locally and exists nowhere else. Those are the
+facts that decide whether you should delete something, and they are what `reclaim`
+is built to surface.
+
+It is also considerably faster: sizing is a parallel walk rather than a serial
+one. On a real machine, a full scan takes **~11 seconds** versus **~260 seconds**
+single-threaded.
+
+## Install
+
+Nothing is published yet — there is no release, no tap and no crates.io entry.
+Until then, build it:
+
+```sh
+git clone https://github.com/gokul-kulkarni/reclaim && cd reclaim
+npm --prefix web ci && npm --prefix web run build   # embeds the web UI
+cargo install --path crates/reclaim-cli
+```
+
+Once the first tag ships, these are the intended routes:
+
+```sh
+brew install gokul-kulkarni/tap/reclaim              # macOS and Linux
+curl -fsSL https://github.com/gokul-kulkarni/reclaim/releases/latest/download/install.sh | sh
+cargo install reclaim-cli
+```
+
+Then:
+
+```sh
+reclaim
+```
+
+## Use
+
+```sh
+reclaim                                 # interactive terminal UI
+reclaim scan                            # plain report, deletes nothing
+reclaim scan --json                      # machine-readable
+reclaim clean --tier safe --yes          # remove regenerable caches
+reclaim clean --older-than 90d --dry-run # only long-untouched things, report only
+reclaim ui                               # rich web UI on localhost
+reclaim history                          # what previous runs did
+reclaim schedule install --cadence weekly
+```
+
+### The terminal UI
+
+Grouped by ecosystem, sizes filling in live as they are measured.
+`space` selects, `a` selects everything safe, `enter` shows the full evidence for
+an item, `d` reclaims, `p` toggles dry-run, `?` for keys.
+
+### The web UI
+
+`reclaim ui` opens a page with a treemap of your disk, a size-against-staleness
+plot whose top-right quadrant is the easy wins, and the same list with a detail
+drawer. It binds `127.0.0.1` only, requires a token minted per process, rejects
+cross-site origins, and dies with the command. It can select and delete, exactly
+like the terminal UI.
+
+## How it decides
+
+Every candidate carries a **risk tier**:
+
+| Tier | Meaning | Examples |
+|---|---|---|
+| `safe` | Regenerates automatically on the next build. | `~/.npm`, `DerivedData`, `.gradle/caches` |
+| `review` | Recoverable, but costs a re-download or a long rebuild. | `~/.m2`, simulator runtimes, NDK versions |
+| `caution` | May be irreplaceable. Never removed without explicit confirmation. | Xcode Archives, docker volumes, AVDs |
+
+…plus **how it comes back** (`auto on next npm install` / `1.2 GB re-download` /
+`~8 min rebuild` / `gone forever`), **when you last used it**, and any
+**warnings** the provider attached. The tool ranks items by a reclaim score, but
+the score is only a sorting aid — the argument for deleting something is the
+evidence, which is always shown.
+
+**Staleness comes from the project, not the artifact.** A `target/` directory
+whose own mtime is six months old still belongs to a repository you committed to
+yesterday, and that project is not stale. Artifact candidates derive their age
+from the owning project's source files and git activity, which is why an actively
+developed project's build output ranks near the bottom of the list even when it
+is the largest single item on disk.
+
+## Safety
+
+- Every path is re-validated immediately before removal, not just at scan time —
+  a symlink can be swapped in while you deliberate.
+- Refuses `$HOME` itself, `/`, system directories, `~/.ssh`, `~/Documents`,
+  anything containing a `.git` component, anything outside the allowed roots, and
+  anything you add to `delete.protected_paths`. There is no `--force` past this.
+- Default delete mode is **tiered**: `safe` items are purged so the space is
+  actually freed; anything riskier goes to the Trash so it is recoverable.
+  `--trash` / `--purge` override per run.
+- Trashed bytes are reported separately from freed bytes, because a tool that
+  says "freed 40 GB" while your disk is unchanged is lying to you.
+- `clean` is a dry run unless you pass `--yes` or answer a prompt.
+- Every run — including scheduled ones — is journalled to
+  `~/.local/state/reclaim/history/`. See it with `reclaim history`.
+
+## Sizes
+
+Sizes are computed from `st_blocks`, so sparse files and APFS clones report what
+you would actually get back rather than their apparent size. Hardlinked content —
+the pnpm store, conda's `pkgs`, Nix — is counted **once** across the whole scan,
+with the duplicate bytes reported separately as `shared`. Totals therefore match
+reality rather than the sum of `du` over each directory.
+
+> One caveat: when several candidates share the same inodes, the per-row split of
+> unique versus shared bytes depends on measurement order. The **total** is always
+> correct, and each row shows its shared amount, but do not read a single row's
+> figure as "exactly what deleting this alone frees".
+
+## Background cleanup
+
+```sh
+reclaim schedule install --cadence weekly    # launchd on macOS, systemd user timer on Linux
+reclaim schedule status
+reclaim schedule uninstall
+```
+
+Background runs are constrained: they never touch the `caution` tier, they run at
+low IO priority so they cannot fight a build, and the first run is a dry run you
+can inspect with `reclaim history` before arming it.
+
+## Configure
+
+```sh
+reclaim config init      # writes a fully commented ~/.config/reclaim/config.toml
+reclaim config show      # effective config
+reclaim config validate
+```
+
+The setting most worth changing is `scan.project_roots` — point it at where you
+keep code and `reclaim` will find `node_modules`, `target/`, `.venv` and friends:
+
+```toml
+[scan]
+project_roots = ["~/dev", "~/work"]
+```
+
+See [docs/config.md](docs/config.md) for every option and
+[docs/providers.md](docs/providers.md) for exactly what each provider touches.
+
+## Development
+
+```sh
+cargo test --workspace
+npm --prefix web ci && npm --prefix web run build   # required before a release build
+cargo build --release
+cargo run -- --root /tmp/sandbox scan               # operate on a sandbox home
+```
+
+`--root` reparents the entire engine, which is how the tests exercise real
+filesystem behaviour without touching your actual home directory. It also
+suppresses the providers that reclaim by running a command (`brew cleanup`,
+`docker prune`, `simctl delete`), since those act on machine-global state that a
+sandbox cannot represent.
+
+### Packaging
+
+```sh
+./scripts/package.sh      # build dist/reclaim-<target>.tar.gz + .sha256, as CI does
+./scripts/brew-test.sh    # install that tarball through Homebrew for real, then test and audit it
+```
+
+`brew-test.sh` builds a tarball from your working tree, points a throwaway local
+tap at it with a real checksum, runs `brew install`, `brew test` and
+`brew audit --strict`, then uninstalls. It exercises the exact path a user takes
+on `brew install`, minus the download — so a broken formula is caught before
+anything is published. See [docs/releasing.md](docs/releasing.md).
+
+## Platforms
+
+macOS and Linux are supported and tested. Windows compiles; providers with no
+Windows equivalent simply find nothing.
+
+## Licence
+
+MIT

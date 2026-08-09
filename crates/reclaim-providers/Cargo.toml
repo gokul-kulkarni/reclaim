@@ -1,0 +1,25 @@
+[package]
+name = "reclaim-providers"
+description = "Ecosystem providers for reclaim: what each toolchain leaves on disk and how safe it is to remove."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+# Exposes `reclaim_providers::testing::TestHome` for integration tests in other
+# crates. Off by default so `tempfile` is not linked into the shipped binary.
+testing = ["dep:tempfile"]
+
+[dependencies]
+reclaim-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tempfile = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+rstest.workspace = true

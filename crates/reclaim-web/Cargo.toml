@@ -1,0 +1,28 @@
+[package]
+name = "reclaim-web"
+description = "Local web UI for reclaim: axum server with embedded frontend assets."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+reclaim-core.workspace = true
+reclaim-providers.workspace = true
+
+anyhow.workspace = true
+axum.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+rust-embed = { workspace = true, features = ["interpolate-folder-path"] }
+mime_guess.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tower.workspace = true

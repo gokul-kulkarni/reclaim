@@ -1,0 +1,42 @@
+[package]
+name = "reclaim-cli"
+description = "Find and safely reclaim disk space taken by developer tool caches and build artifacts."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "../../README.md"
+keywords = ["disk", "cache", "cleanup", "developer-tools", "cli"]
+categories = ["command-line-utilities", "filesystem"]
+
+# The crate is `reclaim-cli` because `reclaim` is taken on crates.io, but the
+# binary users type is `reclaim`.
+[[bin]]
+name = "reclaim"
+path = "src/main.rs"
+
+[dependencies]
+reclaim-core.workspace = true
+reclaim-providers.workspace = true
+reclaim-web.workspace = true
+
+anyhow.workspace = true
+clap.workspace = true
+clap_complete.workspace = true
+crossterm.workspace = true
+ratatui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+predicates.workspace = true
+tempfile.workspace = true
+reclaim-providers = { workspace = true, features = ["testing"] }

@@ -1,0 +1,462 @@
+/* Follows the OS theme: this is a local developer tool, not a brand surface. */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #ffffff;
+  --surface: #f6f7f9;
+  --border: #dfe3e8;
+  --text: #12161c;
+  --dim: #5f6b7a;
+
+  --safe: #2f9e5e;
+  --review: #c98a12;
+  --caution: #cf3f3f;
+  --accent: #2f6fdb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171c;
+    --surface: #1c2027;
+    --border: #2c323b;
+    --text: #e6e9ee;
+    --dim: #99a3b1;
+
+    --safe: #4cc37e;
+    --review: #e0a838;
+    --caution: #f2645f;
+    --accent: #6aa1ff;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.app {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 1.25rem 1.25rem 5rem;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+h1 {
+  font-size: 1.15rem;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.totals {
+  color: var(--dim);
+  font-size: 0.85rem;
+}
+
+.actions {
+  margin-left: auto;
+  display: flex;
+  gap: 0.5rem;
+}
+
+button {
+  font: inherit;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button.danger {
+  background: var(--caution);
+  border-color: var(--caution);
+  color: #fff;
+}
+
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text);
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--border);
+}
+
+.views {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.tab.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.search,
+select {
+  font: inherit;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.search {
+  min-width: 10rem;
+}
+
+main {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 0.5rem;
+  overflow-x: auto;
+}
+
+.banner {
+  padding: 0.6rem 0.8rem;
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.banner.error {
+  border-color: var(--caution);
+}
+
+.banner.warn {
+  border-color: var(--review);
+}
+
+.banner.ok {
+  border-color: var(--safe);
+}
+
+.banner ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.note,
+.empty {
+  color: var(--dim);
+  font-size: 0.85rem;
+}
+
+/* ---- table ---- */
+
+table.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.grid th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--dim);
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.grid td {
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.row.selected {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dim {
+  color: var(--dim);
+}
+
+.shared {
+  color: var(--review);
+  font-size: 0.8em;
+}
+
+.pill {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  border: 1px solid currentColor;
+}
+
+.pill.safe {
+  color: var(--safe);
+}
+
+.pill.review {
+  color: var(--review);
+}
+
+.pill.caution {
+  color: var(--caution);
+}
+
+.pill.active {
+  color: var(--accent);
+  margin-left: 0.4rem;
+}
+
+.warn-dot {
+  display: inline-block;
+  margin-left: 0.4rem;
+  width: 1.1em;
+  height: 1.1em;
+  line-height: 1.1em;
+  text-align: center;
+  border-radius: 50%;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #fff;
+  background: var(--review);
+  cursor: help;
+}
+
+.warn-dot.danger {
+  background: var(--caution);
+}
+
+/* ---- charts ---- */
+
+.treemap-group {
+  fill: color-mix(in srgb, var(--border) 45%, transparent);
+}
+
+.treemap-group-label {
+  fill: var(--dim);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.treemap-cell {
+  cursor: pointer;
+}
+
+.treemap-rect {
+  opacity: 0.75;
+  stroke: var(--surface);
+}
+
+.treemap-cell:hover .treemap-rect {
+  opacity: 1;
+}
+
+.treemap-rect.selected {
+  opacity: 1;
+  stroke: var(--text);
+  stroke-width: 2;
+}
+
+.treemap-label,
+.treemap-sub {
+  fill: #fff;
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.treemap-sub {
+  opacity: 0.85;
+}
+
+.scatter-quadrant {
+  fill: color-mix(in srgb, var(--safe) 10%, transparent);
+}
+
+.scatter-quadrant-label {
+  fill: var(--dim);
+  font-size: 10px;
+  text-anchor: start;
+}
+
+.axis {
+  stroke: var(--border);
+}
+
+.tick,
+.axis-title {
+  fill: var(--dim);
+  font-size: 10px;
+}
+
+.dot {
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.dot.safe {
+  fill: var(--safe);
+}
+
+.dot.review {
+  fill: var(--review);
+}
+
+.dot.caution {
+  fill: var(--caution);
+}
+
+.dot:hover,
+.dot.selected {
+  opacity: 1;
+  stroke: var(--text);
+  stroke-width: 2;
+}
+
+/* ---- action bar ---- */
+
+.bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 1.25rem;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  opacity: 0.55;
+}
+
+.bar.active {
+  opacity: 1;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.caution-note {
+  color: var(--caution);
+  font-style: normal;
+}
+
+/* ---- overlays ---- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.panel {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.25rem;
+  max-width: 40rem;
+  width: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.panel h2 {
+  margin-top: 0;
+  font-size: 1.05rem;
+}
+
+.panel dl {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  gap: 0.35rem 1rem;
+  margin: 1rem 0;
+}
+
+.panel dt {
+  color: var(--dim);
+}
+
+.panel dd {
+  margin: 0;
+}
+
+.paths {
+  margin: 0;
+  padding-left: 1rem;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+}
+
+.warnings {
+  padding-left: 1.1rem;
+}
+
+.warnings li.danger {
+  color: var(--caution);
+}
+
+.warnings li.caution {
+  color: var(--review);
+}
+
+.warn-text {
+  color: var(--review);
+}
+
+.confirm-list {
+  padding-left: 1.1rem;
+  font-size: 0.86rem;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}

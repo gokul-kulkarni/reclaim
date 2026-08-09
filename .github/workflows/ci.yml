@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14      # arm64
+          - os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # The frontend is embedded into the binary, so it has to exist before the
+      # Rust build. A missing web/dist otherwise only fails at release time.
+      - name: Build frontend
+        run: |
+          npm --prefix web ci
+          npm --prefix web run build
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features
+
+      - name: Test
+        run: cargo test --workspace --all-features
+
+      # The safety guard is the one thing that must never regress, so it gets an
+      # explicit run whose failure is unambiguous in the logs.
+      - name: Safety suite
+        run: cargo test -p reclaim-core safety -- --nocapture
+
+      - name: Smoke test the binary against a sandbox home
+        shell: bash
+        run: |
+          set -euo pipefail
+          SANDBOX="$(mktemp -d)"
+          mkdir -p "$SANDBOX/.npm/_cacache" "$SANDBOX/dev/app/node_modules/pkg" "$SANDBOX/.config/reclaim"
+          head -c 2000000 /dev/urandom > "$SANDBOX/.npm/_cacache/blob"
+          head -c 2000000 /dev/urandom > "$SANDBOX/dev/app/node_modules/pkg/index.js"
+          echo '{}' > "$SANDBOX/dev/app/package.json"
+          echo '{}' > "$SANDBOX/dev/app/package-lock.json"
+          printf '[scan]\nproject_roots = ["~/dev"]\n' > "$SANDBOX/.config/reclaim/config.toml"
+
+          run() { cargo run --quiet -- --root "$SANDBOX" --no-color "$@"; }
+
+          # The fixture is ~2 MB and seconds old, so the size, age and in-use
+          # filters that protect a real machine all have to be relaxed here.
+          run scan --all
+          run scan --all --json > /tmp/scan.json
+          python3 - <<'CHECK'
+          import json
+          data = json.load(open("/tmp/scan.json"))
+          labels = [c["label"] for c in data["candidates"]]
+          assert labels, "scan found nothing"
+          assert "node_modules" in labels, f"project discovery failed: {labels}"
+          CHECK
+
+          # A dry run must leave everything in place.
+          run clean --min-size 0 --older-than 0 --include-active --dry-run
+          test -f "$SANDBOX/.npm/_cacache/blob"
+          test -d "$SANDBOX/dev/app/node_modules"
+
+          run clean --min-size 0 --older-than 0 --include-active --yes --purge
+          test ! -d "$SANDBOX/.npm/_cacache"
+          test ! -d "$SANDBOX/dev/app/node_modules"
+
+          run history
+          run config init --force
+          run config validate
+          cargo run --quiet -- --root "$SANDBOX" providers
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm --prefix web ci && npm --prefix web run build
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Coverage
+        run: cargo llvm-cov --workspace --all-features --fail-under-lines 80
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-deny
+      - run: cargo deny check
