@@ -1,4 +1,18 @@
 name: Release
+#
+# Builds the two Linux targets and publishes them as a GitHub Release.
+#
+# macOS targets are deliberately NOT built here. GitHub's macOS runner
+# capacity — especially the Intel (x86_64-apple-darwin, macos-13) image — is
+# small, and a build queued indefinitely with zero progress rather than
+# failing outright or completing (see the aarch64-apple-darwin sibling job,
+# which built fine on macos-14 the one time this was tried). Both macOS
+# targets cross-compile natively from a single Apple Silicon machine via
+# Xcode's own toolchain, so they're built and attached locally instead:
+#
+#   ./scripts/release-macos.sh v0.1.0   # after this workflow's `publish` job
+#                                        # has created the release
+#   ./scripts/update-tap.sh 0.1.0       # once all four tarballs are attached
 
 on:
   push:
@@ -14,10 +28,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: aarch64-apple-darwin
-            os: macos-14
-          - target: x86_64-apple-darwin
-            os: macos-13
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
           - target: aarch64-unknown-linux-musl
@@ -60,7 +70,7 @@ jobs:
           cp "target/${{ matrix.target }}/release/reclaim" "dist/$NAME/"
           cp README.md LICENSE "dist/$NAME/" 2>/dev/null || cp README.md "dist/$NAME/"
           tar -C dist -czf "dist/$NAME.tar.gz" "$NAME"
-          shasum -a 256 "dist/$NAME.tar.gz" > "dist/$NAME.tar.gz.sha256"
+          sha256sum "dist/$NAME.tar.gz" > "dist/$NAME.tar.gz.sha256"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -84,76 +94,6 @@ jobs:
             artifacts/*.sha256
             install.sh
           generate_release_notes: true
-
-  # Update the Homebrew tap to point at the release just published.
-  #
-  # Requires a TAP_GITHUB_TOKEN secret with write access to
-  # github.com/gokul-kulkarni/homebrew-tap. Without it this job is skipped, and
-  # the release is still usable via install.sh and `cargo install`.
-  homebrew:
-    needs: publish
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Check for tap credentials
-        id: creds
+      - name: Next steps
         run: |
-          if [ -n "${{ secrets.TAP_GITHUB_TOKEN }}" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::TAP_GITHUB_TOKEN is not set; skipping the Homebrew tap update."
-          fi
-
-      - name: Check out the tap
-        if: steps.creds.outputs.available == 'true'
-        uses: actions/checkout@v4
-        with:
-          repository: gokul-kulkarni/homebrew-tap
-          token: ${{ secrets.TAP_GITHUB_TOKEN }}
-          path: tap
-
-      - name: Render the formula
-        if: steps.creds.outputs.available == 'true'
-        run: |
-          set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          FORMULA=packaging/homebrew/reclaim.rb
-
-          sed -i "s/^  version \".*\"/  version \"${VERSION}\"/" "$FORMULA"
-
-          # Substitute each placeholder with the checksum of its own artifact,
-          # so a missing build fails the release rather than shipping a formula
-          # that 404s for one architecture.
-          for target in aarch64-apple-darwin x86_64-apple-darwin \
-                        aarch64-unknown-linux-musl x86_64-unknown-linux-gnu; do
-            sum_file="artifacts/reclaim-${target}.tar.gz.sha256"
-            test -f "$sum_file" || { echo "missing checksum for ${target}"; exit 1; }
-            sha="$(awk '{print $1}' "$sum_file")"
-            placeholder="REPLACE_WITH_$(echo "$target" | tr 'a-z-' 'A-Z_')_SHA256"
-            sed -i "s/${placeholder}/${sha}/" "$FORMULA"
-          done
-
-          if grep -q REPLACE_WITH "$FORMULA"; then
-            echo "formula still has unsubstituted placeholders:"; grep REPLACE_WITH "$FORMULA"; exit 1
-          fi
-
-          mkdir -p tap/Formula
-          cp "$FORMULA" tap/Formula/reclaim.rb
-
-      - name: Commit to the tap
-        if: steps.creds.outputs.available == 'true'
-        working-directory: tap
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Formula/reclaim.rb
-          git diff --staged --quiet || git commit -m "reclaim ${GITHUB_REF_NAME#v}"
-          git push
+          echo "::notice::Linux binaries published. Run ./scripts/release-macos.sh ${GITHUB_REF_NAME} locally to attach the macOS builds, then ./scripts/update-tap.sh ${GITHUB_REF_NAME#v} to update the Homebrew tap."

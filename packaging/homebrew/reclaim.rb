@@ -1,8 +1,11 @@
 # Homebrew formula for reclaim.
 #
 # This is the file that gets copied into the tap repository
-# (github.com/gokul-kulkarni/homebrew-tap) as Formula/reclaim.rb. The release
-# workflow rewrites the version and the four sha256 values on every tag.
+# (github.com/gokul-kulkarni/homebrew-tap) as Formula/reclaim.rb.
+# ./scripts/update-tap.sh rewrites the version and the four sha256 values and
+# pushes it there once all four platform tarballs exist on a GitHub release
+# (two built by CI, two attached locally by ./scripts/release-macos.sh — see
+# docs/releasing.md).
 #
 # It installs a prebuilt binary rather than building from source: reclaim
 # embeds a Vite frontend, so a source build would need both Rust and Node as

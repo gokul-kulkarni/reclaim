@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 #
-# Build a release tarball for the host platform, in exactly the layout the
-# release workflow produces and the Homebrew formula expects.
+# Build a release tarball, in exactly the layout the release workflow produces
+# and the Homebrew formula expects.
 #
-#   ./scripts/package.sh            -> dist/reclaim-<target>.tar.gz (+ .sha256)
-#   ./scripts/package.sh --skip-web -> reuse an existing web/dist
+#   ./scripts/package.sh                          -> dist/reclaim-<host-target>.tar.gz (+ .sha256)
+#   ./scripts/package.sh --target x86_64-apple-darwin -> cross-build for a specific target
+#   ./scripts/package.sh --skip-web               -> reuse an existing web/dist
 #
 # Run this before ./scripts/brew-test.sh.
 
@@ -13,16 +14,28 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 SKIP_WEB=false
-for arg in "$@"; do
-  case "$arg" in
-    --skip-web) SKIP_WEB=true ;;
+TARGET=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --skip-web) SKIP_WEB=true; shift ;;
+    --target) TARGET="$2"; shift 2 ;;
     -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "unknown option: $arg" >&2; exit 1 ;;
+    *) echo "unknown option: $1" >&2; exit 1 ;;
   esac
 done
 
-TARGET="$(rustc -vV | awk '/^host:/ {print $2}')"
+if [ -z "$TARGET" ]; then
+  TARGET="$(rustc -vV | awk '/^host:/ {print $2}')"
+fi
 NAME="reclaim-${TARGET}"
+
+# A target other than the host's own needs its std library installed. This is
+# how the two macOS targets are built from a single Apple Silicon machine:
+# Xcode's toolchain can emit both natively, no Docker or second Mac needed.
+if ! rustup target list --installed | grep -qx "$TARGET"; then
+  echo "==> Installing rust target ${TARGET}"
+  rustup target add "$TARGET"
+fi
 
 # The frontend is embedded into the binary, so it has to exist first. Building
 # the binary without it produces a working CLI but a web UI that only shows the
