@@ -18,7 +18,7 @@ use crate::error::{Error, Result};
 use crate::model::{CandidateId, Group, Tier};
 
 /// How a run was started, which is what makes background activity auditable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Trigger {
     /// Interactive TUI.
@@ -29,6 +29,18 @@ pub enum Trigger {
     Web,
     /// A launchd / systemd timer.
     Scheduled,
+}
+
+impl Trigger {
+    /// Human-facing label for report headings.
+    pub fn label(self) -> &'static str {
+        match self {
+            Trigger::Tui => "Terminal UI",
+            Trigger::Cli => "CLI",
+            Trigger::Web => "Web UI",
+            Trigger::Scheduled => "Scheduled",
+        }
+    }
 }
 
 /// What happened to one candidate in a run.

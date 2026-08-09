@@ -69,6 +69,73 @@ export interface CleanResponse {
   items: CleanItem[];
 }
 
+export interface GroupStats {
+  group: string;
+  title: string;
+  freed: number;
+  trashed: number;
+  items: number;
+}
+
+export interface TriggerStats {
+  label: string;
+  runs: number;
+  freed: number;
+}
+
+export interface TimelinePoint {
+  started_at_ms: number;
+  when: string;
+  freed: number;
+  trashed: number;
+  cumulative_freed: number;
+}
+
+export interface TopItem {
+  label: string;
+  group_title: string;
+  tier: Tier;
+  bytes: number;
+  when: string;
+}
+
+export interface FailureEntry {
+  when: string;
+  label: string;
+  provider: string;
+  error: string;
+}
+
+export interface RunSummary {
+  id: string;
+  when: string;
+  trigger: string;
+  dry_run: boolean;
+  candidates_found: number;
+  freed: number;
+  trashed: number;
+  items: number;
+  failures: number;
+  succeeded: boolean;
+}
+
+export interface HistoryReport {
+  generated_at_ms: number;
+  runs: number;
+  real_runs: number;
+  dry_runs: number;
+  lifetime_freed: number;
+  lifetime_trashed: number;
+  lifetime_candidates_found: number;
+  failed_items: number;
+  by_group: GroupStats[];
+  by_trigger: TriggerStats[];
+  timeline: TimelinePoint[];
+  top_items: TopItem[];
+  failures: FailureEntry[];
+  runs_detail: RunSummary[];
+}
+
 function readToken(): string {
   const params = new URLSearchParams(window.location.search);
   const token = params.get("t") ?? "";
@@ -117,7 +184,7 @@ export const api = {
       body: JSON.stringify({ ids, dry_run: dryRun, confirm_caution: confirmCaution }),
     }),
 
-  history: () => request<{ runs: unknown[] }>("/history"),
+  history: () => request<HistoryReport>("/history"),
 };
 
 /** Binary units with the short spelling, matching the CLI exactly. */

@@ -7,9 +7,10 @@ use reclaim_core::config::{Config, DeleteMode, DEFAULT_CONFIG_TEMPLATE};
 use reclaim_core::exec::{self, CleanOptions};
 use reclaim_core::journal::Trigger;
 use reclaim_core::model::Candidate;
+use reclaim_core::report::HistoryReport;
 
 use crate::app::{App, Purpose};
-use crate::cli::{CleanArgs, ConfigAction, HistoryArgs, ScanArgs};
+use crate::cli::{CleanArgs, ConfigAction, HistoryAction, HistoryArgs, HistoryReportArgs, ScanArgs};
 use crate::render::{self, Style};
 
 pub fn scan(app: &App, args: &ScanArgs, style: &Style) -> Result<()> {
@@ -206,12 +207,49 @@ fn confirm(prompt: &str) -> Result<bool> {
 }
 
 pub fn history(app: &App, args: &HistoryArgs, style: &Style) -> Result<()> {
+    if let Some(HistoryAction::Report(report_args)) = &args.action {
+        return history_report(app, report_args);
+    }
+
     let records = app.journal.read_recent(args.last);
     if args.json {
         println!("{}", serde_json::to_string_pretty(&records)?);
     } else {
         print!("{}", render::history_report(&records, style));
     }
+    Ok(())
+}
+
+fn history_report(app: &App, args: &HistoryReportArgs) -> Result<()> {
+    // 0 means "every run"; read_recent's own `0` would mean "none", so this is
+    // resolved here rather than teaching the journal a second meaning for 0.
+    let limit = if args.last == 0 { usize::MAX } else { args.last };
+    let records = app.journal.read_recent(limit);
+
+    let report = HistoryReport::build(&records);
+    let html = crate::report_html::render(&report, reclaim_core::VERSION);
+
+    let out_path = args
+        .out
+        .clone()
+        .unwrap_or_else(|| app.journal.dir().join("report.html"));
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::write(&out_path, html).with_context(|| format!("writing {}", out_path.display()))?;
+
+    println!(
+        "Wrote {} ({} run(s), {} lifetime freed).",
+        out_path.display(),
+        report.runs,
+        reclaim_core::format::bytes(report.lifetime_freed)
+    );
+
+    if args.open {
+        reclaim_web::open_browser(&format!("file://{}", out_path.display()));
+    }
+
     Ok(())
 }
 

@@ -22,6 +22,7 @@ pub mod journal;
 pub mod model;
 pub mod pipeline;
 pub mod platform;
+pub mod report;
 pub mod safety;
 pub mod staleness;
 pub mod walk;
@@ -36,6 +37,7 @@ pub use model::{
 };
 pub use pipeline::{scan, Provider, ScanContext, ScanEvent, ScanResult};
 pub use platform::Paths;
+pub use report::HistoryReport;
 pub use safety::PathGuard;
 pub use staleness::Filter;
 

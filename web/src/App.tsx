@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, formatBytes } from "./api";
-import type { Candidate, CleanResponse, ScanResponse } from "./api";
+import type { Candidate, CleanResponse, HistoryReport, ScanResponse } from "./api";
 import { Treemap } from "./Treemap";
 import { Scatter } from "./Scatter";
+import { History } from "./History";
 
-type View = "treemap" | "scatter" | "table";
+type View = "treemap" | "scatter" | "table" | "history";
 type SortKey = "score" | "size" | "age" | "name";
 
 export default function App() {
@@ -18,6 +19,9 @@ export default function App() {
   const [inspecting, setInspecting] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [result, setResult] = useState<CleanResponse | null>(null);
+  const [history, setHistory] = useState<HistoryReport | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   const runScan = useCallback(async (all = false) => {
     setBusy(true);
@@ -44,6 +48,27 @@ export default function App() {
     }
     void runScan();
   }, [runScan]);
+
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      setHistory(await api.history());
+    } catch (e) {
+      setHistoryError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  // Loaded lazily, the first time the tab is opened, rather than alongside the
+  // initial scan: most sessions never look at history, so fetching it eagerly
+  // would just be a wasted journal read on every startup.
+  useEffect(() => {
+    if (view === "history" && !history && !historyLoading && api.hasToken()) {
+      void loadHistory();
+    }
+  }, [view, history, historyLoading, loadHistory]);
 
   const rows = useMemo(() => {
     if (!scan) return [];
@@ -99,7 +124,12 @@ export default function App() {
       const response = await api.clean([...selected], dryRun, cautionChosen.length > 0);
       setResult(response);
       setConfirming(false);
-      if (!dryRun) await runScan();
+      if (!dryRun) {
+        await runScan();
+        // A real clean changes lifetime totals; refresh an already-open
+        // history tab rather than leaving it showing stale numbers.
+        if (history) void loadHistory();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -158,80 +188,97 @@ export default function App() {
       )}
 
       <nav className="views">
-        {(["treemap", "scatter", "table"] as View[]).map((v) => (
+        {(["treemap", "scatter", "table", "history"] as View[]).map((v) => (
           <button key={v} className={view === v ? "tab active" : "tab"} onClick={() => setView(v)}>
-            {v === "treemap" ? "Disk map" : v === "scatter" ? "Size vs staleness" : "List"}
+            {v === "treemap"
+              ? "Disk map"
+              : v === "scatter"
+                ? "Size vs staleness"
+                : v === "table"
+                  ? "List"
+                  : "History"}
           </button>
         ))}
-        <input
-          className="search"
-          placeholder="Filter…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        {view === "table" && (
-          <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
-            <option value="score">Sort: best first</option>
-            <option value="size">Sort: largest</option>
-            <option value="age">Sort: stalest</option>
-            <option value="name">Sort: name</option>
-          </select>
-        )}
-        <button onClick={selectAllSafe}>Select all (not caution)</button>
-        <button onClick={() => setSelected(new Set())}>Clear</button>
-      </nav>
-
-      <main className={busy && scan ? "scanning" : undefined}>
-        {busy && !scan ? (
-          <div className="scan-loading">
-            <span className="spinner" aria-hidden="true" />
-            <p>Scanning your disk…</p>
-            <p className="dim">
-              Large project roots can take a while the first time — sizes will fill in as they're
-              found.
-            </p>
-          </div>
-        ) : (
+        {view !== "history" && (
           <>
-            {view === "treemap" && (
-              <Treemap
-                candidates={rows}
-                selected={selected}
-                onSelect={toggle}
-                onInspect={setInspecting}
-                width={960}
-                height={520}
-              />
-            )}
-            {view === "scatter" && (
-              <Scatter
-                candidates={rows}
-                selected={selected}
-                onSelect={toggle}
-                width={960}
-                height={520}
-              />
-            )}
+            <input
+              className="search"
+              placeholder="Filter…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
             {view === "table" && (
-              <Table rows={rows} selected={selected} onToggle={toggle} onInspect={setInspecting} />
+              <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
+                <option value="score">Sort: best first</option>
+                <option value="size">Sort: largest</option>
+                <option value="age">Sort: stalest</option>
+                <option value="name">Sort: name</option>
+              </select>
             )}
+            <button onClick={selectAllSafe}>Select all (not caution)</button>
+            <button onClick={() => setSelected(new Set())}>Clear</button>
           </>
         )}
-        {busy && scan && (
-          <div className="scan-overlay">
-            <span className="spinner" aria-hidden="true" />
-            Rescanning…
-          </div>
-        )}
-      </main>
+      </nav>
 
-      {scan && scan.hidden_count > 0 && (
+      {view === "history" ? (
+        <main>
+          <History report={history} loading={historyLoading} error={historyError} onRefresh={loadHistory} />
+        </main>
+      ) : (
+        <main className={busy && scan ? "scanning" : undefined}>
+          {busy && !scan ? (
+            <div className="scan-loading">
+              <span className="spinner" aria-hidden="true" />
+              <p>Scanning your disk…</p>
+              <p className="dim">
+                Large project roots can take a while the first time — sizes will fill in as they're
+                found.
+              </p>
+            </div>
+          ) : (
+            <>
+              {view === "treemap" && (
+                <Treemap
+                  candidates={rows}
+                  selected={selected}
+                  onSelect={toggle}
+                  onInspect={setInspecting}
+                  width={960}
+                  height={520}
+                />
+              )}
+              {view === "scatter" && (
+                <Scatter
+                  candidates={rows}
+                  selected={selected}
+                  onSelect={toggle}
+                  width={960}
+                  height={520}
+                />
+              )}
+              {view === "table" && (
+                <Table rows={rows} selected={selected} onToggle={toggle} onInspect={setInspecting} />
+              )}
+            </>
+          )}
+          {busy && scan && (
+            <div className="scan-overlay">
+              <span className="spinner" aria-hidden="true" />
+              Rescanning…
+            </div>
+          )}
+        </main>
+      )}
+
+      {view !== "history" && scan && scan.hidden_count > 0 && (
         <p className="note">
           {scan.hidden_count} item(s) totalling {formatBytes(scan.hidden_bytes)} are below the size
           threshold. Use “Show everything” to include them.
         </p>
       )}
 
+      {view !== "history" && (
       <footer className={selected.size ? "bar active" : "bar"}>
         <span>
           {selected.size} selected · <strong>{formatBytes(chosenBytes)}</strong>
@@ -251,6 +298,7 @@ export default function App() {
           Reclaim {formatBytes(chosenBytes)}
         </button>
       </footer>
+      )}
 
       {inspected && <Detail candidate={inspected} onClose={() => setInspecting(null)} />}
 

@@ -7,7 +7,7 @@
 
 use std::fmt::Write as _;
 
-use reclaim_core::format::{bytes, ellipsize};
+use reclaim_core::format::{bytes, ellipsize, relative_time};
 use reclaim_core::journal::{Disposition, RunRecord};
 use reclaim_core::model::{humanize_age, Candidate, Severity, Tier};
 use reclaim_core::pipeline::ScanResult;
@@ -302,7 +302,7 @@ pub fn history_report(records: &[RunRecord], style: &Style) -> String {
     );
 
     for record in records {
-        let when = format_timestamp(record.started_at);
+        let when = relative_time(record.started_at);
         let trigger = format!("{:?}", record.trigger).to_lowercase();
         let _ = writeln!(
             out,
@@ -315,27 +315,6 @@ pub fn history_report(records: &[RunRecord], style: &Style) -> String {
     }
 
     out
-}
-
-/// Local time is not worth a chrono dependency here; the journal is ordered and
-/// what the user needs is "how long ago", not a wall-clock timestamp.
-fn format_timestamp(time: std::time::SystemTime) -> String {
-    match time.elapsed() {
-        Ok(elapsed) => {
-            let days = elapsed.as_secs() / 86_400;
-            if days == 0 {
-                let hours = elapsed.as_secs() / 3600;
-                if hours == 0 {
-                    format!("{} min ago", elapsed.as_secs() / 60)
-                } else {
-                    format!("{hours} hours ago")
-                }
-            } else {
-                humanize_age(days as u32)
-            }
-        }
-        Err(_) => "just now".to_string(),
-    }
 }
 
 #[cfg(test)]

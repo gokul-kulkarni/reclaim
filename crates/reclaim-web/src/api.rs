@@ -9,9 +9,11 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use reclaim_core::exec::{self, CleanOptions};
+use reclaim_core::format::{epoch_millis, relative_time};
 use reclaim_core::journal::Trigger;
 use reclaim_core::model::{humanize_age, Candidate};
 use reclaim_core::pipeline;
+use reclaim_core::report::HistoryReport;
 
 use crate::assets;
 use crate::state::ServerState;
@@ -356,9 +358,174 @@ async fn clean(
     }))
 }
 
-async fn history(State(state): State<ServerState>) -> Json<serde_json::Value> {
-    let records = state.journal.read_recent(25);
-    Json(serde_json::json!({ "runs": records }))
+/// The aggregate history report the frontend consumes.
+///
+/// Same shape `reclaim history report`'s HTML export renders, converted to a
+/// view with epoch-millisecond timestamps and pre-humanised "when" strings so
+/// the browser never re-derives them and drifts from the CLI. Built over the
+/// whole journal, not a truncated window: lifetime totals must mean the whole
+/// lifetime.
+#[derive(Debug, Serialize)]
+struct HistoryReportView {
+    generated_at_ms: u64,
+    runs: usize,
+    real_runs: usize,
+    dry_runs: usize,
+    lifetime_freed: u64,
+    lifetime_trashed: u64,
+    lifetime_candidates_found: u64,
+    failed_items: usize,
+    by_group: Vec<GroupStatsView>,
+    by_trigger: Vec<TriggerStatsView>,
+    timeline: Vec<TimelinePointView>,
+    top_items: Vec<TopItemView>,
+    failures: Vec<FailureEntryView>,
+    runs_detail: Vec<RunSummaryView>,
+}
+
+#[derive(Debug, Serialize)]
+struct GroupStatsView {
+    group: String,
+    title: String,
+    freed: u64,
+    trashed: u64,
+    items: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct TriggerStatsView {
+    label: String,
+    runs: usize,
+    freed: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct TimelinePointView {
+    started_at_ms: u64,
+    when: String,
+    freed: u64,
+    trashed: u64,
+    cumulative_freed: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct TopItemView {
+    label: String,
+    group_title: String,
+    tier: String,
+    bytes: u64,
+    when: String,
+}
+
+#[derive(Debug, Serialize)]
+struct FailureEntryView {
+    when: String,
+    label: String,
+    provider: String,
+    error: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RunSummaryView {
+    id: String,
+    when: String,
+    trigger: String,
+    dry_run: bool,
+    candidates_found: usize,
+    freed: u64,
+    trashed: u64,
+    items: usize,
+    failures: usize,
+    succeeded: bool,
+}
+
+impl From<&HistoryReport> for HistoryReportView {
+    fn from(r: &HistoryReport) -> Self {
+        Self {
+            generated_at_ms: epoch_millis(r.generated_at),
+            runs: r.runs,
+            real_runs: r.real_runs,
+            dry_runs: r.dry_runs,
+            lifetime_freed: r.lifetime_freed,
+            lifetime_trashed: r.lifetime_trashed,
+            lifetime_candidates_found: r.lifetime_candidates_found,
+            failed_items: r.failed_items,
+            by_group: r
+                .by_group
+                .iter()
+                .map(|g| GroupStatsView {
+                    group: g.group.as_str().to_string(),
+                    title: g.title.clone(),
+                    freed: g.freed,
+                    trashed: g.trashed,
+                    items: g.items,
+                })
+                .collect(),
+            by_trigger: r
+                .by_trigger
+                .iter()
+                .map(|t| TriggerStatsView {
+                    label: t.label.clone(),
+                    runs: t.runs,
+                    freed: t.freed,
+                })
+                .collect(),
+            timeline: r
+                .timeline
+                .iter()
+                .map(|p| TimelinePointView {
+                    started_at_ms: epoch_millis(p.started_at),
+                    when: relative_time(p.started_at),
+                    freed: p.freed,
+                    trashed: p.trashed,
+                    cumulative_freed: p.cumulative_freed,
+                })
+                .collect(),
+            top_items: r
+                .top_items
+                .iter()
+                .map(|i| TopItemView {
+                    label: i.label.clone(),
+                    group_title: i.group.title().to_string(),
+                    tier: i.tier.as_str().to_string(),
+                    bytes: i.bytes,
+                    when: relative_time(i.started_at),
+                })
+                .collect(),
+            failures: r
+                .failures
+                .iter()
+                .map(|f| FailureEntryView {
+                    when: relative_time(f.started_at),
+                    label: f.label.clone(),
+                    provider: f.provider.clone(),
+                    error: f.error.clone(),
+                })
+                .collect(),
+            runs_detail: r
+                .runs_detail
+                .iter()
+                .map(|run| RunSummaryView {
+                    id: run.id.clone(),
+                    when: relative_time(run.started_at),
+                    trigger: format!("{:?}", run.trigger).to_lowercase(),
+                    dry_run: run.dry_run,
+                    candidates_found: run.candidates_found,
+                    freed: run.freed,
+                    trashed: run.trashed,
+                    items: run.items,
+                    failures: run.failures,
+                    succeeded: run.succeeded,
+                })
+                .collect(),
+        }
+    }
+}
+
+async fn history(State(state): State<ServerState>) -> Json<HistoryReportView> {
+    let records = state.journal.read_recent(usize::MAX);
+    let report = HistoryReport::build(&records);
+    Json(HistoryReportView::from(&report))
 }
 
 async fn config(State(state): State<ServerState>) -> Json<serde_json::Value> {
@@ -711,11 +878,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn history_reflects_a_completed_clean() {
+        let (_tmp, state) = populated_state();
+        let scan = json_of(state.clone(), get(state.clone(), "/api/scan?all=true")).await;
+        let id = scan["candidates"][0]["id"].as_str().unwrap().to_string();
+
+        let body = format!(r#"{{"ids":["{id}"],"dry_run":false}}"#);
+        let cleaned = json_of(state.clone(), post_json(&state, "/api/clean", &body)).await;
+        let freed = cleaned["bytes_freed"].as_u64().unwrap();
+        assert!(freed > 0);
+
+        let history = json_of(state.clone(), get(state.clone(), "/api/history")).await;
+        assert_eq!(history["real_runs"], 1);
+        assert_eq!(history["lifetime_freed"], freed);
+        assert_eq!(history["runs_detail"].as_array().unwrap().len(), 1);
+        assert_eq!(history["runs_detail"][0]["succeeded"], true);
+        let group = &history["by_group"][0];
+        assert_eq!(group["freed"], freed);
+    }
+
+    #[tokio::test]
     async fn history_and_providers_endpoints_respond() {
         let (_tmp, state) = populated_state();
 
         let history = json_of(state.clone(), get(state.clone(), "/api/history")).await;
-        assert!(history["runs"].is_array());
+        assert!(history["runs"].is_number());
+        assert!(history["runs_detail"].is_array());
+        assert!(history["by_group"].is_array());
 
         let providers = json_of(state.clone(), get(state.clone(), "/api/providers")).await;
         let list = providers["providers"].as_array().unwrap();

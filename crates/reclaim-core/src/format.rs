@@ -4,7 +4,7 @@
 //! matching what `du -h` and Finder show so the numbers are comparable to what
 //! users already see.
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 const UNITS: [&str; 6] = ["B", "KB", "MB", "GB", "TB", "PB"];
 
@@ -119,6 +119,41 @@ pub fn duration(d: Duration) -> String {
     }
 }
 
+/// "3 hours ago" / "yesterday" / "2 years ago", for a point in time rather
+/// than an age in days — the CLI's history table, the HTML report and the
+/// web UI's history tab all want the same wording for "when did this run".
+pub fn relative_time(t: SystemTime) -> String {
+    match t.elapsed() {
+        Ok(elapsed) => {
+            let days = elapsed.as_secs() / 86_400;
+            if days == 0 {
+                let hours = elapsed.as_secs() / 3600;
+                if hours == 0 {
+                    let mins = elapsed.as_secs() / 60;
+                    if mins == 0 {
+                        "just now".to_string()
+                    } else {
+                        format!("{mins} min ago")
+                    }
+                } else {
+                    format!("{hours} hour{} ago", if hours == 1 { "" } else { "s" })
+                }
+            } else {
+                crate::model::humanize_age(days as u32)
+            }
+        }
+        Err(_) => "just now".to_string(),
+    }
+}
+
+/// Milliseconds since the Unix epoch, for JSON payloads a browser can hand
+/// straight to `new Date(ms)` without a serde-derived `{secs, nanos}` struct.
+pub fn epoch_millis(t: SystemTime) -> u64 {
+    t.duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// Truncate a string to `max` display columns, ellipsising the middle.
 ///
 /// Middle-ellipsis rather than tail, because paths are far more identifiable by
@@ -220,5 +255,26 @@ mod tests {
         assert_eq!(duration(Duration::from_millis(1400)), "1.4s");
         assert_eq!(duration(Duration::from_secs(125)), "2m 05s");
         assert_eq!(duration(Duration::from_secs(3700)), "1h 01m");
+    }
+
+    #[test]
+    fn relative_time_uses_fine_grain_for_recent_events() {
+        let now = SystemTime::now();
+        assert_eq!(relative_time(now), "just now");
+        assert_eq!(
+            relative_time(now - Duration::from_secs(3 * 3600)),
+            "3 hours ago"
+        );
+        assert_eq!(
+            relative_time(now - Duration::from_secs(3600)),
+            "1 hour ago",
+            "singular hour must not read '1 hours ago'"
+        );
+    }
+
+    #[test]
+    fn epoch_millis_roundtrips_through_unix_epoch() {
+        let t = SystemTime::UNIX_EPOCH + Duration::from_millis(1_700_000_000_123);
+        assert_eq!(epoch_millis(t), 1_700_000_000_123);
     }
 }

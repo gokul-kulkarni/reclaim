@@ -21,6 +21,7 @@ use reclaim_core::model::{Group, Tier};
         reclaim clean --tier safe --yes      remove regenerable caches without prompting\n  \
         reclaim clean --older-than 90d       only things untouched for 90 days\n  \
         reclaim ui                           rich web UI on localhost\n  \
+        reclaim history report --open        detailed HTML report of every run\n  \
         reclaim schedule install             run weekly in the background"
 )]
 pub struct Cli {
@@ -192,6 +193,33 @@ pub struct HistoryArgs {
     /// Emit JSON instead of a table.
     #[arg(long)]
     pub json: bool,
+
+    #[command(subcommand)]
+    pub action: Option<HistoryAction>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum HistoryAction {
+    /// Render a detailed HTML report: lifetime totals, a breakdown by
+    /// ecosystem and trigger, a timeline, the biggest reclaims ever, and
+    /// recurring failures.
+    Report(HistoryReportArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct HistoryReportArgs {
+    /// Where to write the report. Defaults to a timestamped file under the
+    /// history directory (see `reclaim history` for its location).
+    #[arg(long, value_name = "FILE")]
+    pub out: Option<PathBuf>,
+
+    /// How many runs to include. 0 means every run in the journal.
+    #[arg(long, default_value_t = 0, value_name = "N")]
+    pub last: usize,
+
+    /// Open the report in the default browser after writing it.
+    #[arg(long)]
+    pub open: bool,
 }
 
 #[derive(Debug, Subcommand)]

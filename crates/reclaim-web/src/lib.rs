@@ -84,7 +84,10 @@ async fn serve_async(paths: Paths, config: Config, options: ServeOptions) -> Res
 }
 
 /// Best-effort browser launch. Never fatal: the URL is already printed.
-fn open_browser(url: &str) {
+///
+/// Public so other local-only surfaces (`reclaim history report --open`) can
+/// launch a browser the same way, without duplicating the per-OS opener.
+pub fn open_browser(url: &str) {
     let opener = if cfg!(target_os = "macos") {
         "open"
     } else if cfg!(target_os = "linux") {

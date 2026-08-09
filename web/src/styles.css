@@ -538,3 +538,143 @@ code {
   justify-content: flex-end;
   margin-top: 1rem;
 }
+
+/* ---- history tab ---- */
+
+.small {
+  font-size: 0.8em;
+}
+
+.history {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.history h3 {
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+}
+
+.history section {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+}
+
+.history-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.6rem;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.7rem;
+  text-align: center;
+}
+
+.card-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.card.safe .card-value {
+  color: var(--safe);
+}
+
+.card.review .card-value {
+  color: var(--review);
+}
+
+.card.caution .card-value {
+  color: var(--caution);
+}
+
+.card-label {
+  color: var(--dim);
+  font-size: 0.75rem;
+  margin-top: 0.15rem;
+}
+
+.chart {
+  width: 100%;
+  height: auto;
+}
+
+.chart-area {
+  fill: color-mix(in srgb, var(--accent) 18%, transparent);
+  stroke: none;
+}
+
+.chart-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.chart-dot {
+  fill: var(--accent);
+}
+
+.bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 11rem 1fr 7rem;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.bar-track {
+  display: flex;
+  height: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.bar-fill.freed {
+  background: var(--safe);
+}
+
+.bar-fill.trashed {
+  background: var(--review);
+  opacity: 0.7;
+}
+
+.bar-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-size: 0.85rem;
+}
+
+.failure-row td {
+  color: var(--caution);
+}
+
+@media (max-width: 800px) {
+  .history-cols {
+    grid-template-columns: 1fr;
+  }
+}

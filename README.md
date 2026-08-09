@@ -79,6 +79,7 @@ reclaim clean --tier safe --yes          # remove regenerable caches
 reclaim clean --older-than 90d --dry-run # only long-untouched things, report only
 reclaim ui                               # rich web UI on localhost
 reclaim history                          # what previous runs did
+reclaim history report --open            # detailed HTML report: trends, by ecosystem, failures
 reclaim schedule install --cadence weekly
 ```
 
@@ -94,7 +95,8 @@ an item, `d` reclaims, `p` toggles dry-run, `?` for keys.
 plot whose top-right quadrant is the easy wins, and the same list with a detail
 drawer. It binds `127.0.0.1` only, requires a token minted per process, rejects
 cross-site origins, and dies with the command. It can select and delete, exactly
-like the terminal UI.
+like the terminal UI. A History tab tracks lifetime totals, a trend over every
+run, a breakdown by ecosystem and trigger, and any failures worth investigating.
 
 ## How it decides
 

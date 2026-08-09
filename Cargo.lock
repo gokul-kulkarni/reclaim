@@ -1303,7 +1303,7 @@ dependencies = [
 
 [[package]]
 name = "reclaim-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1326,7 +1326,7 @@ dependencies = [
 
 [[package]]
 name = "reclaim-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "dashmap",
  "directories",
@@ -1350,7 +1350,7 @@ dependencies = [
 
 [[package]]
 name = "reclaim-providers"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "reclaim-core",
  "rstest",
@@ -1362,7 +1362,7 @@ dependencies = [
 
 [[package]]
 name = "reclaim-web"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "axum",

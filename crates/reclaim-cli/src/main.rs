@@ -4,6 +4,7 @@ mod app;
 mod cli;
 mod commands;
 mod render;
+mod report_html;
 mod schedule;
 mod tui;
 
