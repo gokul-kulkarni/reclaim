@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 rust-version = "1.82"
 license = "MIT"
@@ -16,9 +16,9 @@ repository = "https://github.com/gokul-kulkarni/reclaim"
 authors = ["Gokul Kulkarni"]
 
 [workspace.dependencies]
-reclaim-core = { path = "crates/reclaim-core", version = "0.1.2" }
-reclaim-providers = { path = "crates/reclaim-providers", version = "0.1.2" }
-reclaim-web = { path = "crates/reclaim-web", version = "0.1.2" }
+reclaim-core = { path = "crates/reclaim-core", version = "0.1.3" }
+reclaim-providers = { path = "crates/reclaim-providers", version = "0.1.3" }
+reclaim-web = { path = "crates/reclaim-web", version = "0.1.3" }
 
 anyhow = "1"
 thiserror = "2"
