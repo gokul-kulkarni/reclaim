@@ -278,7 +278,7 @@ mod tests {
     fn a_bigger_older_cache_outranks_a_smaller_newer_one() {
         let cfg = Config::default();
         let big_old = score(&candidate(Tier::Safe, 20 * GB, 200), &cfg);
-        let small_new = score(&candidate(Tier::Safe, 1 * GB, 20), &cfg);
+        let small_new = score(&candidate(Tier::Safe, GB, 20), &cfg);
         assert!(big_old > small_new, "{big_old} should beat {small_new}");
     }
 
@@ -344,7 +344,7 @@ mod tests {
         let cfg = Config::default();
         let ranked = rank(
             vec![
-                candidate(Tier::Caution, 1 * GB, 10),
+                candidate(Tier::Caution, GB, 10),
                 candidate(Tier::Safe, 20 * GB, 300),
                 candidate(Tier::Review, 5 * GB, 100),
             ],

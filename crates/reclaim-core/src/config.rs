@@ -269,21 +269,14 @@ impl Default for NodeOptions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ContainerOptions {
     /// Include named volumes in the docker prune candidate.
     ///
-    /// Off by default: volumes hold databases and other state that exists nowhere else.
+    /// Off by default (`false` is the derived default): volumes hold database
+    /// contents and other state that exists nowhere else.
     pub include_volumes: bool,
-}
-
-impl Default for ContainerOptions {
-    fn default() -> Self {
-        Self {
-            include_volumes: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

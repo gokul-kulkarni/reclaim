@@ -209,15 +209,13 @@ struct LocalArtifacts {
 /// else, so the whole repository has to be treated as irreplaceable.
 fn count_locally_installed(repo: &Path, budget: usize) -> LocalArtifacts {
     let mut result = LocalArtifacts::default();
-    let mut examined = 0usize;
 
     let walker = jwalk_lite(repo);
-    for dir in walker {
+    for (examined, dir) in walker.into_iter().enumerate() {
         if examined >= budget {
             result.truncated = true;
             break;
         }
-        examined += 1;
 
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;

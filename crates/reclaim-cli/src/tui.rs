@@ -337,11 +337,7 @@ fn handle_key(ui: &mut Ui, app: &App, key: KeyEvent) -> Result<()> {
             ui.editing_filter = true;
             ui.filter_text.clear();
         }
-        KeyCode::Enter => {
-            if ui.current().is_some() {
-                ui.screen = Screen::Detail;
-            }
-        }
+        KeyCode::Enter if ui.current().is_some() => ui.screen = Screen::Detail,
         KeyCode::Char('?') => ui.screen = Screen::Help,
         KeyCode::Char('p') => {
             ui.dry_run = !ui.dry_run;

@@ -383,12 +383,15 @@ fn protected_paths_from_config_are_refused() {
         .file(".npm/_cacache/blob", 2_000_000)
         .config("[delete]\nprotected_paths = [\"~/.npm\"]\n");
 
+    // The item is refused by the safety guard, so the run must report that
+    // failure with a non-zero exit rather than silently reporting success.
     sandbox
         .cmd()
         .args(["clean"])
         .args(PERMISSIVE)
         .args(["--older-than", "0", "--yes", "--purge"])
-        .assert();
+        .assert()
+        .failure();
 
     assert!(
         sandbox.path(".npm/_cacache/blob").exists(),
