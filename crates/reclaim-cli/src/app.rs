@@ -1,11 +1,15 @@
 //! Shared wiring: resolving config, paths and filters once, so every subcommand
 //! and both front-ends see exactly the same view of the machine.
 
+use std::io::{IsTerminal, Write};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
+
 use anyhow::{Context, Result};
 use reclaim_core::config::Config;
 use reclaim_core::journal::Journal;
 use reclaim_core::model::Tier;
-use reclaim_core::pipeline::{self, Provider, ScanResult};
+use reclaim_core::pipeline::{self, Provider, ScanEvent, ScanResult};
 use reclaim_core::staleness::Filter;
 use reclaim_core::{PathGuard, Paths};
 
@@ -74,8 +78,24 @@ impl App {
     }
 
     /// Run a full scan with the given filter.
+    ///
+    /// A home directory with a large `.gradle/caches` or similar can take tens
+    /// of seconds to measure; without feedback that looks indistinguishable
+    /// from a hang. When stderr is a terminal, a self-erasing status line
+    /// tracks the scan's stages so `reclaim scan` and `reclaim clean` never sit
+    /// silent. It never touches stdout, so `--json` output stays parseable.
     pub fn scan(&self, filter: &Filter) -> ScanResult {
-        pipeline::scan(&self.providers, &self.paths, &self.config, filter, None)
+        if !std::io::stderr().is_terminal() {
+            return pipeline::scan(&self.providers, &self.paths, &self.config, filter, None);
+        }
+
+        let (tx, rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let handle = scope
+                .spawn(|| pipeline::scan(&self.providers, &self.paths, &self.config, filter, Some(&tx)));
+            report_scan_progress(&rx);
+            handle.join().expect("scan thread panicked")
+        })
     }
 
     /// Build a filter from config defaults plus command-line overrides.
@@ -114,6 +134,40 @@ impl App {
     pub fn effective_tier(&self, requested: Option<Tier>) -> Tier {
         requested.unwrap_or(Tier::Safe)
     }
+}
+
+/// Render scan events as a single self-erasing status line on stderr, so a
+/// slow scan looks busy rather than hung. Throttled, since `Measured` fires
+/// once per candidate and a home directory can have thousands.
+fn report_scan_progress(rx: &mpsc::Receiver<ScanEvent>) {
+    let mut stderr = std::io::stderr();
+    let throttle = Duration::from_millis(80);
+    let mut last_draw = Instant::now() - throttle;
+
+    while let Ok(event) = rx.recv() {
+        let line = match &event {
+            ScanEvent::ProjectsFound { count, .. } => {
+                format!("reclaim: found {count} project(s), discovering caches…")
+            }
+            ScanEvent::Discovered(candidates) => {
+                format!("reclaim: measuring {} item(s)…", candidates.len())
+            }
+            ScanEvent::Measured { done, total, .. } => {
+                format!("reclaim: measuring {done}/{total}…")
+            }
+            ScanEvent::Complete(_) => break,
+        };
+
+        if last_draw.elapsed() < throttle {
+            continue;
+        }
+        last_draw = Instant::now();
+        let _ = write!(stderr, "\r{line}\x1b[K");
+        let _ = stderr.flush();
+    }
+
+    let _ = write!(stderr, "\r\x1b[K");
+    let _ = stderr.flush();
 }
 
 #[cfg(test)]

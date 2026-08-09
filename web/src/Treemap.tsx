@@ -116,6 +116,12 @@ export function Treemap({ candidates, selected, onSelect, onInspect, width, heig
               fill={TIER_FILL[node.data.tier ?? "safe"]}
               className={isSelected ? "treemap-rect selected" : "treemap-rect"}
             />
+            {isSelected && (
+              // A tint over the whole cell, not just an edge stroke: a 1px
+              // border on a small cell (or one already tier-colored red/orange)
+              // was easy to miss. This reads the same regardless of size or tier.
+              <rect width={w} height={h} className="treemap-select-tint" />
+            )}
             {w > 54 && h > 20 && (
               <>
                 <text x={4} y={13} className="treemap-label">
@@ -127,6 +133,11 @@ export function Treemap({ candidates, selected, onSelect, onInspect, width, heig
                   </text>
                 )}
               </>
+            )}
+            {isSelected && w > 16 && h > 16 && (
+              <text x={w - 6} y={13} textAnchor="end" className="treemap-check">
+                ✓
+              </text>
             )}
           </g>
         );

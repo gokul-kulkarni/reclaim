@@ -35,8 +35,22 @@ single-threaded.
 
 ## Install
 
-Nothing is published yet — there is no release, no tap and no crates.io entry.
-Until then, build it:
+**Homebrew** (macOS or Linux, Intel or ARM):
+
+```sh
+brew install gokul-kulkarni/tap/reclaim
+```
+
+**Without Homebrew** — the same prebuilt binaries via a plain install script:
+
+```sh
+curl -fsSL https://github.com/gokul-kulkarni/reclaim/releases/latest/download/install.sh | sh
+```
+
+Both fetch a prebuilt binary; neither needs Rust or Node installed. To upgrade
+later: `brew upgrade reclaim`, or re-run the `curl` line.
+
+**From source** (for development, or if you'd rather build it yourself):
 
 ```sh
 git clone https://github.com/gokul-kulkarni/reclaim && cd reclaim
@@ -44,13 +58,10 @@ npm --prefix web ci && npm --prefix web run build   # embeds the web UI
 cargo install --path crates/reclaim-cli
 ```
 
-Once the first tag ships, these are the intended routes:
-
-```sh
-brew install gokul-kulkarni/tap/reclaim              # macOS and Linux
-curl -fsSL https://github.com/gokul-kulkarni/reclaim/releases/latest/download/install.sh | sh
-cargo install reclaim-cli
-```
+`cargo install reclaim-cli` also works, but ships the "frontend not built"
+fallback page for `reclaim ui` unless `web/dist` is vendored — the CLI and TUI
+are unaffected. See [docs/releasing.md](docs/releasing.md) for how releases and
+the tap are built.
 
 Then:
 

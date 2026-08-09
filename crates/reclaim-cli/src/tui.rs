@@ -64,6 +64,9 @@ impl Sort {
     }
 }
 
+/// Braille-dot animation frames for the scanning spinner.
+const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
 struct Ui {
     candidates: Vec<Candidate>,
     selected: BTreeSet<CandidateId>,
@@ -77,6 +80,8 @@ struct Ui {
     status: String,
     dry_run: bool,
     quit: bool,
+    /// Advances once per redraw while `scanning`, driving `SPINNER`.
+    spinner_tick: usize,
 }
 
 impl Ui {
@@ -94,7 +99,12 @@ impl Ui {
             status: "Scanning…".into(),
             dry_run: false,
             quit: false,
+            spinner_tick: 0,
         }
+    }
+
+    fn spinner(&self) -> char {
+        SPINNER[self.spinner_tick % SPINNER.len()]
     }
 
     /// Rows currently shown, after the text filter.
@@ -210,6 +220,9 @@ fn event_loop<B: Backend + io::Write>(
             drain_scan_events(&mut ui, &rx);
 
             if last_draw.elapsed() >= tick {
+                if ui.scanning {
+                    ui.spinner_tick = ui.spinner_tick.wrapping_add(1);
+                }
                 terminal.draw(|frame| draw(frame, &ui, app))?;
                 last_draw = Instant::now();
             }
@@ -455,6 +468,29 @@ fn draw_header(frame: &mut Frame, area: Rect, ui: &Ui) {
 }
 
 fn draw_list(frame: &mut Frame, area: Rect, ui: &Ui, app: &App) {
+    // Stage 1 (project discovery) can run for several seconds with nothing to
+    // show yet; a bare empty table there reads as broken rather than busy.
+    if ui.scanning && ui.candidates.is_empty() {
+        let block = Block::default().borders(Borders::ALL);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let text = vec![
+            Line::from(Span::styled(
+                format!("{} {}", ui.spinner(), ui.status),
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                "Large project roots can take a while the first time.",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ];
+        frame.render_widget(
+            Paragraph::new(text).alignment(ratatui::layout::Alignment::Center),
+            centered(inner, 60, 3),
+        );
+        return;
+    }
+
     let rows: Vec<Row> = ui
         .visible()
         .iter()
@@ -524,8 +560,13 @@ fn draw_list(frame: &mut Frame, area: Rect, ui: &Ui, app: &App) {
 
 fn draw_footer(frame: &mut Frame, area: Rect, ui: &Ui) {
     let keys = "space select · a all · n none · d clean · / filter · s sort · enter detail · p dry-run · ? help · q quit";
+    let status = if ui.scanning {
+        format!("{} {}", ui.spinner(), ui.status)
+    } else {
+        ui.status.clone()
+    };
     let text = vec![
-        Line::from(ui.status.clone()),
+        Line::from(status),
         Line::from(Span::styled(keys, Style::default().fg(Color::DarkGray))),
     ];
     frame.render_widget(

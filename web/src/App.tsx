@@ -181,21 +181,48 @@ export default function App() {
         <button onClick={() => setSelected(new Set())}>Clear</button>
       </nav>
 
-      <main>
-        {view === "treemap" && (
-          <Treemap
-            candidates={rows}
-            selected={selected}
-            onSelect={toggle}
-            onInspect={setInspecting}
-            width={960}
-            height={520}
-          />
+      <main className={busy && scan ? "scanning" : undefined}>
+        {busy && !scan ? (
+          <div className="scan-loading">
+            <span className="spinner" aria-hidden="true" />
+            <p>Scanning your disk…</p>
+            <p className="dim">
+              Large project roots can take a while the first time — sizes will fill in as they're
+              found.
+            </p>
+          </div>
+        ) : (
+          <>
+            {view === "treemap" && (
+              <Treemap
+                candidates={rows}
+                selected={selected}
+                onSelect={toggle}
+                onInspect={setInspecting}
+                width={960}
+                height={520}
+              />
+            )}
+            {view === "scatter" && (
+              <Scatter
+                candidates={rows}
+                selected={selected}
+                onSelect={toggle}
+                width={960}
+                height={520}
+              />
+            )}
+            {view === "table" && (
+              <Table rows={rows} selected={selected} onToggle={toggle} onInspect={setInspecting} />
+            )}
+          </>
         )}
-        {view === "scatter" && (
-          <Scatter candidates={rows} selected={selected} onSelect={toggle} width={960} height={520} />
+        {busy && scan && (
+          <div className="scan-overlay">
+            <span className="spinner" aria-hidden="true" />
+            Rescanning…
+          </div>
         )}
-        {view === "table" && <Table rows={rows} selected={selected} onToggle={toggle} onInspect={setInspecting} />}
       </main>
 
       {scan && scan.hidden_count > 0 && (

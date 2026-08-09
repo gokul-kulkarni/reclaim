@@ -142,11 +142,69 @@ select {
 }
 
 main {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface);
   padding: 0.5rem;
   overflow-x: auto;
+}
+
+/* ---- loading ---- */
+
+.spinner {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.scan-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 4rem 1rem;
+  text-align: center;
+}
+
+.scan-loading .spinner {
+  width: 1.6em;
+  height: 1.6em;
+  border-width: 3px;
+}
+
+/* A rescan keeps the stale view visible underneath, dimmed, rather than
+   yanking it away — losing your place in a treemap you were just reading
+   would be worse than a slightly stale view for a second. */
+main.scanning > :not(.scan-overlay) {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.scan-overlay {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 0.85rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .banner {
@@ -292,8 +350,28 @@ table.grid {
 
 .treemap-rect.selected {
   opacity: 1;
-  stroke: var(--text);
-  stroke-width: 2;
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+/* Accent tint over the whole selected cell so selection is obvious regardless
+   of the tier's fill color (red/orange cells made a same-color edge stroke
+   easy to miss) or how small the cell is. */
+.treemap-select-tint {
+  fill: var(--accent);
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.treemap-check {
+  fill: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  pointer-events: none;
+  paint-order: stroke;
+  stroke: var(--accent);
+  stroke-width: 3px;
+  stroke-linejoin: round;
 }
 
 .treemap-label,
