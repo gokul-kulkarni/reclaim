@@ -208,8 +208,9 @@ pub enum HistoryAction {
 
 #[derive(Debug, Args)]
 pub struct HistoryReportArgs {
-    /// Where to write the report. Defaults to a timestamped file under the
-    /// history directory (see `reclaim history` for its location).
+    /// Where to write the report. Defaults to `report.html` in the history
+    /// directory (see `reclaim history` for its location), overwriting any
+    /// previous report there.
     #[arg(long, value_name = "FILE")]
     pub out: Option<PathBuf>,
 
