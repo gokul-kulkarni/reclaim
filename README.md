@@ -228,6 +228,10 @@ anything is published. See [docs/releasing.md](docs/releasing.md).
 macOS and Linux are supported and tested. Windows compiles; providers with no
 Windows equivalent simply find nothing.
 
+## Changes
+
+See [CHANGELOG.md](CHANGELOG.md) for what changed in each release.
+
 ## Licence
 
 MIT

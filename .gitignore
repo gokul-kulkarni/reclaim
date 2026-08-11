@@ -5,3 +5,5 @@
 /dist
 *.log
 .DS_Store
+# Personal launch collateral, not part of the project.
+/launch-posts.md
