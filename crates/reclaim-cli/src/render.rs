@@ -207,7 +207,10 @@ fn append_scan_footer(out: &mut String, result: &ScanResult, style: &Style) {
         .iter()
         .any(|c| c.size.is_some_and(|s| s.partial))
     {
-        notes.push("some sizes are incomplete due to permission errors".to_string());
+        // Deliberately does not name a cause: `partial` is set by unreadable
+        // directories, metadata failures and device-boundary crossings alike, so
+        // blaming permissions specifically was often simply wrong.
+        notes.push("some sizes are incomplete, so totals are a lower bound".to_string());
     }
 
     let _ = writeln!(out, "{}", style.dim(&notes.join(" · ")));

@@ -56,7 +56,9 @@ impl LinkTracker {
 /// Options for a single measurement.
 #[derive(Debug, Clone)]
 pub struct WalkOptions {
-    /// Threads for this walk. 0 lets jwalk choose.
+    /// Threads for this walk. 0 inherits the surrounding Rayon pool, 1 walks
+    /// serially (required when the caller's own pool has a single thread — see
+    /// `measure`), and anything higher spins up a dedicated pool of that size.
     pub threads: usize,
     /// Stay on the device the root lives on.
     pub same_device: bool,
@@ -109,12 +111,19 @@ pub fn measure(path: &Path, links: &LinkTracker, opts: &WalkOptions) -> Measurem
     let newest_atime = Arc::new(AtomicU64::new(0));
     let partial = Arc::new(AtomicBool::new(false));
 
-    let parallelism = if opts.threads == 0 {
-        jwalk::Parallelism::RayonDefaultPool {
+    // jwalk's Rayon-backed modes have to acquire worker threads to make progress.
+    // When the caller is already inside a single-threaded Rayon pool — the
+    // `--concurrency 1` case — that one thread is blocked right here waiting for
+    // the walk, so the nested request can never be served: it burns the whole
+    // `busy_timeout` and yields nothing. That surfaced as a scan reporting "0 B"
+    // with a bogus "permission errors" note. Walking serially is the right answer
+    // there, since a single-threaded caller has no other thread to overlap with.
+    let parallelism = match opts.threads {
+        0 => jwalk::Parallelism::RayonDefaultPool {
             busy_timeout: std::time::Duration::from_secs(5),
-        }
-    } else {
-        jwalk::Parallelism::RayonNewPool(opts.threads)
+        },
+        1 => jwalk::Parallelism::Serial,
+        n => jwalk::Parallelism::RayonNewPool(n),
     };
 
     let walker = jwalk::WalkDirGeneric::<((), ())>::new(path)
@@ -379,6 +388,40 @@ mod tests {
         );
         assert!(!m.size.partial);
         assert!(m.newest_mtime.is_some());
+    }
+
+    /// Regression: a single-threaded walk used to report nothing at all.
+    ///
+    /// `threads: 0` asks jwalk for Rayon-backed parallelism. Called from inside a
+    /// single-threaded pool (`--concurrency 1`) the only worker is blocked waiting
+    /// on the walk, so the nested request starved, burned the 5s `busy_timeout`
+    /// and returned zeroes with `partial` set — a silent wrong answer, reported to
+    /// the user as "0 B reclaimable".
+    #[test]
+    fn a_single_threaded_walk_measures_the_same_bytes_as_a_parallel_one() {
+        let tmp = TempDir::new().unwrap();
+        write(&tmp.path().join("a.bin"), 4096);
+        write(&tmp.path().join("sub/b.bin"), 8192);
+        write(&tmp.path().join("sub/deeper/c.bin"), 16384);
+
+        let parallel = measure(tmp.path(), &LinkTracker::new(), &WalkOptions::default());
+        let serial = measure(
+            tmp.path(),
+            &LinkTracker::new(),
+            &WalkOptions {
+                threads: 1,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(serial.size.logical, 4096 + 8192 + 16384);
+        assert_eq!(serial.size.logical, parallel.size.logical);
+        assert_eq!(serial.size.files, parallel.size.files);
+        assert_eq!(serial.size.on_disk, parallel.size.on_disk);
+        assert!(
+            !serial.size.partial,
+            "a serial walk of a readable tree is complete, not partial"
+        );
     }
 
     #[test]

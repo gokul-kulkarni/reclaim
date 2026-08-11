@@ -178,14 +178,19 @@ pub fn scan(
     // Stage 3: measure in parallel, sharing one link tracker so a hardlinked
     // inode reached through two candidates is only counted once.
     let links = LinkTracker::new();
+    let threads = config.scan.threads();
     let walk_opts = WalkOptions {
-        threads: 0, // inherit the surrounding pool rather than nesting our own
+        // Normally inherit the surrounding pool rather than nesting our own. With
+        // a single-threaded pool that would deadlock against itself, so ask for a
+        // serial walk instead: parallelism across candidates is already gone, and
+        // a nested parallel walk has no thread left to run on.
+        threads: if threads == 1 { 1 } else { 0 },
         same_device: !config.scan.cross_device,
         max_depth: 64,
     };
 
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(config.scan.threads())
+        .num_threads(threads)
         .build()
         .unwrap_or_else(|_| rayon::ThreadPoolBuilder::new().build().unwrap());
 
@@ -304,6 +309,62 @@ mod tests {
             include_active: true,
             ..Filter::default()
         }
+    }
+
+    /// Regression: `--concurrency 1` used to report "0 B reclaimable".
+    ///
+    /// The measurement pool was built with one thread, and each walk then asked
+    /// jwalk for Rayon-backed parallelism — but the single worker was already
+    /// blocked waiting for that walk. The nested request starved, expired its 5s
+    /// busy timeout and returned zeroes, so the scan told the user there was
+    /// nothing to reclaim. A wrong answer is worse than a slow one.
+    #[test]
+    fn scanning_with_one_thread_finds_the_same_bytes_as_the_default() {
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path().canonicalize().unwrap();
+        let cache = tree(&home, ".cache/big", 256 * 1024);
+
+        let providers = || -> Vec<Box<dyn Provider>> {
+            vec![Box::new(Fake {
+                id: "fake.thing",
+                paths: vec![cache.clone()],
+                kind: Kind::GlobalCache,
+            })]
+        };
+
+        let single = Config {
+            scan: crate::config::ScanConfig {
+                concurrency: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let one = scan(
+            &providers(),
+            &Paths::with_home(&home),
+            &single,
+            &no_filter(),
+            None,
+        );
+        let auto = scan(
+            &providers(),
+            &Paths::with_home(&home),
+            &Config::default(),
+            &no_filter(),
+            None,
+        );
+
+        assert!(auto.total_reclaimable() > 0, "fixture must be measurable");
+        assert_eq!(
+            one.total_reclaimable(),
+            auto.total_reclaimable(),
+            "concurrency 1 must measure the same bytes, not silently report zero"
+        );
+        assert!(
+            one.candidates.iter().all(|c| !c.size.unwrap().partial),
+            "a readable tree must not be reported as a partial measurement"
+        );
     }
 
     #[test]

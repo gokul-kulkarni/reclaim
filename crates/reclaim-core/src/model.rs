@@ -324,7 +324,9 @@ pub struct Size {
     pub shared: u64,
     pub files: u64,
     pub dirs: u64,
-    /// True if the walk was cut short (permission errors, depth limit).
+    /// True if the walk was cut short for any reason: an unreadable directory, a
+    /// metadata failure, a device boundary, or the depth limit. Callers must not
+    /// assume a specific cause when reporting it.
     pub partial: bool,
 }
 
