@@ -7,18 +7,30 @@ Go, Xcode, Android, Docker, .NET, Ruby, PHP, Dart and friends — then tells you
 for each one, **how stale it is**, **what it will cost you to get it back**, and
 **what could go wrong** if you delete it. It removes only what you choose.
 
-```
-Rust  (2.6 GB)
-     392 MB  review     2 years ago     rust toolchain: 1.52.1-aarch64-apple-darwin
-      ~/.rustup/toolchains/1.52.1-aarch64-apple-darwin  → re-download from static.rust-lang.org
-      ! Any project pinning `1.52.1-aarch64-apple-darwin` in rust-toolchain.toml
-        will not build until you reinstall it.
+![reclaim's terminal UI: sizes filling in live as each cache is measured, then sorted by how worthwhile they are to remove](docs/demo-tui.gif)
 
-JVM / Java  (391 MB)
-     246 MB  caution    9 months ago    Maven local repository
-      ~/.m2/repository  → gone forever
-      ! Found 23 artifact(s) with no `_remote.repositories` marker: these came from
-        `mvn install` and are not re-downloadable from any repository.
+`reclaim scan` prints the same thing without the interactive UI (excerpt from a
+real run):
+
+```
+Node.js  (5.85 GB)
+    2.10 GB  review     2 weeks ago     Playwright browsers
+      ~/Library/Caches/ms-playwright  → re-download from Playwright CDN
+      ! Re-downloaded automatically, but it is a large download on a slow link.
+
+Go  (1.99 GB)
+    1.99 GB  review     today           Go module cache
+      ~/go/pkg/mod  → re-download from the Go module proxy
+      ! Go marks these files read-only, so this is cleaned with `go clean -modcache`
+        rather than a plain delete.
+
+Editors & IDEs  (1.03 GB)
+     439 MB  review     13 days ago     Code workspace storage
+      ~/Library/Application Support/Code/User/workspaceStorage  → gone forever
+      ! Loses per-project editor state such as open tabs and local history.
+
+Total reclaimable: 10.0 GB
+scanned 0 project(s) in 10.6s
 ```
 
 ## Why not `du -sh` and `rm -rf`
@@ -29,9 +41,9 @@ or that half of `~/.m2` was built locally and exists nowhere else. Those are the
 facts that decide whether you should delete something, and they are what `reclaim`
 is built to surface.
 
-It is also considerably faster: sizing is a parallel walk rather than a serial
-one. On a real machine, a full scan takes **~11 seconds** versus **~260 seconds**
-single-threaded.
+It is also fast, because sizing is a parallel walk rather than a serial one: a
+full scan of the home directory above — 44 candidates, 10 GB of results — takes
+**about 11 seconds**.
 
 ## Install
 
@@ -90,6 +102,8 @@ Grouped by ecosystem, sizes filling in live as they are measured.
 an item, `d` reclaims, `p` toggles dry-run, `?` for keys.
 
 ### The web UI
+
+![the web UI: a treemap of disk usage by ecosystem, a size-against-staleness plot, and a sortable list](docs/demo-web.gif)
 
 `reclaim ui` opens a page with a treemap of your disk, a size-against-staleness
 plot whose top-right quadrant is the easy wins, and the same list with a detail
