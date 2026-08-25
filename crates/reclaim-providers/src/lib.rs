@@ -8,6 +8,7 @@
 //!
 //! Adding an ecosystem means adding one file here and one line in [`all`].
 
+pub mod ai_tools;
 pub mod android;
 pub mod apple;
 pub mod containers;
@@ -38,6 +39,7 @@ pub fn all() -> Vec<Box<dyn Provider>> {
     providers.extend(android::providers());
     providers.extend(containers::providers());
     providers.extend(misc::providers());
+    providers.extend(ai_tools::providers());
     providers
 }
 

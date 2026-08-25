@@ -197,6 +197,7 @@ pub struct ProviderConfig {
     pub apple: AppleOptions,
     pub node: NodeOptions,
     pub containers: ContainerOptions,
+    pub ai: AiOptions,
 }
 
 impl Default for ProviderConfig {
@@ -209,6 +210,7 @@ impl Default for ProviderConfig {
             apple: AppleOptions::default(),
             node: NodeOptions::default(),
             containers: ContainerOptions::default(),
+            ai: AiOptions::default(),
         }
     }
 }
@@ -265,6 +267,22 @@ impl Default for NodeOptions {
         Self {
             keep_pnpm_store: true,
             offer_node_modules: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AiOptions {
+    /// Probe well-known localhost ports (Ollama, ComfyUI, LM Studio, ...) to
+    /// warn when a tool's files may be in active use right now.
+    pub check_running: bool,
+}
+
+impl Default for AiOptions {
+    fn default() -> Self {
+        Self {
+            check_running: true,
         }
     }
 }

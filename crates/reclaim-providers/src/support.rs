@@ -147,6 +147,18 @@ pub fn automatic(on: &str) -> Regen {
     Regen::Automatic { on: on.to_string() }
 }
 
+/// Best-effort: is something listening on `127.0.0.1:port` right now?
+///
+/// Used to warn when a local AI tool's files may be in active use, not to gate
+/// whether a candidate is offered at all — a closed port proves nothing (wrong
+/// port, tool not running), but an open one is real evidence.
+pub fn port_is_open(port: u16) -> bool {
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_millis(200)).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,6 +216,18 @@ mod tests {
             tmp.path().join("target"),
         );
         assert!(built.is_none());
+    }
+
+    #[test]
+    fn port_is_open_detects_a_bound_listener() {
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(port_is_open(port));
+
+        drop(listener);
+        assert!(!port_is_open(port), "nothing should be listening anymore");
     }
 
     #[test]

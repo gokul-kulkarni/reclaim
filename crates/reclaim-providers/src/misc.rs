@@ -1,6 +1,7 @@
 //! The remaining ecosystems, each small enough that a shared file is clearer
 //! than ten near-identical ones: .NET, Ruby, PHP, Dart/Flutter, build tools,
-//! editors, system caches and ML model caches.
+//! editors and system caches. ML model caches and local AI tools live in
+//! `ai_tools.rs`.
 
 use reclaim_core::model::{Action, Candidate, CandidateBuilder, Group, Regen, Tier, Warning};
 use reclaim_core::pipeline::{Provider, ScanContext};
@@ -506,67 +507,6 @@ impl Provider for System {
     }
 }
 
-// ---------------------------------------------------------------------------
-// ML model caches (disabled by default)
-// ---------------------------------------------------------------------------
-
-pub struct MachineLearning;
-
-impl Provider for MachineLearning {
-    fn id(&self) -> &'static str {
-        "ml.models"
-    }
-
-    fn discover(&self, ctx: &ScanContext) -> Vec<Candidate> {
-        let p = &ctx.paths;
-        let mut out = Vec::new();
-
-        for (id, label, path, source) in [
-            (
-                "ml.huggingface",
-                "Hugging Face model cache",
-                p.cache_dir().join("huggingface"),
-                "the Hugging Face Hub",
-            ),
-            (
-                "ml.huggingface",
-                "Hugging Face model cache",
-                p.home_join(".cache/huggingface"),
-                "the Hugging Face Hub",
-            ),
-            (
-                "ml.torch",
-                "PyTorch hub cache",
-                p.cache_dir().join("torch"),
-                "the PyTorch hub",
-            ),
-            (
-                "ml.ollama",
-                "Ollama models",
-                p.home_join(".ollama/models"),
-                "the Ollama registry",
-            ),
-        ] {
-            if !path.exists() {
-                continue;
-            }
-            out.push(
-                CandidateBuilder::new(id, Group::Ml, label)
-                    .path(path)
-                    .detail("Downloaded model weights.")
-                    .tier(Tier::Review)
-                    .regen(redownload(source))
-                    .warn(Warning::caution(
-                        "Model weights are very large downloads; re-fetching can take a long time.",
-                    ))
-                    .build(),
-            );
-        }
-
-        out
-    }
-}
-
 pub fn providers() -> Vec<Box<dyn Provider>> {
     vec![
         Box::new(DotNet),
@@ -576,7 +516,6 @@ pub fn providers() -> Vec<Box<dyn Provider>> {
         Box::new(BuildTools),
         Box::new(Editors),
         Box::new(System),
-        Box::new(MachineLearning),
     ]
 }
 
@@ -670,35 +609,6 @@ mod tests {
             .find(|c| c.label.contains("Cursor"))
             .expect("cursor cache");
         assert_eq!(cache.tier, Tier::Safe);
-    }
-
-    #[test]
-    fn ml_model_caches_warn_about_the_download_size() {
-        let home = TestHome::new();
-        home.file(
-            ".ollama/models/manifests/registry/library/llama3/latest",
-            1024,
-        );
-
-        let found = home.discover(&MachineLearning);
-        let ollama = found
-            .iter()
-            .find(|c| c.provider == "ml.ollama")
-            .expect("ollama");
-        assert_eq!(ollama.tier, Tier::Review);
-        assert!(ollama
-            .warnings
-            .iter()
-            .any(|w| w.message.contains("large downloads")));
-    }
-
-    #[test]
-    fn ml_is_disabled_by_the_default_config() {
-        let home = TestHome::new();
-        assert!(
-            !home.config.providers.is_enabled("ml.models"),
-            "model weights are deliberate downloads; opt-in only"
-        );
     }
 
     #[test]

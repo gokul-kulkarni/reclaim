@@ -85,6 +85,12 @@ offer_node_modules = true
 # Named docker volumes hold databases and other state that exists nowhere else.
 include_volumes = false
 
+[providers.ai]
+# Probe well-known localhost ports (Ollama, ComfyUI, LM Studio, ...) and warn
+# when a tool's files may be in active use right now. Set false to skip the
+# probe entirely.
+check_running = true
+
 [ui]
 # 0 picks a free port.
 port = 0

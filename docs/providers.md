@@ -107,7 +107,7 @@ corrupts the installation.
 | `buildtools.*` | ccache, Bazel disk cache, Bazelisk, Zig cache, CMake `build/` | `build/` is only claimed when it contains `CMakeCache.txt` — the name is far too common to claim on sight. |
 | `editors.*` | VS Code / Cursor / VSCodium / Windsurf caches and logs, JetBrains caches | Workspace storage is **review**: it holds per-project state such as open tabs and local history. |
 | `system.*` | `brew cleanup -s`, Nix GC, `~/Library/Logs` | Nix `-d` also deletes old profile generations, so rollback stops being possible. |
-| `ml.*` | Hugging Face, PyTorch hub, Ollama models | **Disabled by default** — model weights are deliberate, very large downloads. Enable by removing `"ml"` from `providers.disabled`. |
+| `ml.*` | Hugging Face, PyTorch hub, Ollama and LM Studio model caches; ComfyUI, SillyTavern and Automatic1111 model/output/cache directories | **Disabled by default** — model weights are deliberate, very large downloads. Enable by removing `"ml"` from `providers.disabled`. ComfyUI, SillyTavern and Automatic1111 are found the same way project artifacts are — via the project walk, refined by a marker file unique to that tool (`.comfy_environment`, `public/scripts/world-info.js`, `webui.py` + `modules/paths_internal.py`). When a tool's default port answers right now, its candidates carry an extra warning that files may be in active use (`providers.ai.check_running`). |
 
 ## Adding a provider
 

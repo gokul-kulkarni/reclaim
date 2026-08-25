@@ -65,6 +65,7 @@ disabled = ["ml"]           # full id ("apple.archives") or group prefix ("node"
 | `node.keep_pnpm_store` | `true` | The store is hardlinked into every install; deleting it breaks them for a small real gain. |
 | `node.offer_node_modules` | `true` | |
 | `containers.include_volumes` | `false` | Volumes hold databases and other state that exists nowhere else. |
+| `ai.check_running` | `true` | Probe well-known localhost ports (Ollama, ComfyUI, LM Studio, ...) and warn when a tool's files may be in active use right now. Set `false` to skip the probe entirely. |
 
 `reclaim providers` lists every provider and whether it is enabled.
 
