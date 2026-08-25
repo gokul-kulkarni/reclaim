@@ -7,6 +7,11 @@ Go, Xcode, Android, Docker, .NET, Ruby, PHP, Dart and friends — then tells you
 for each one, **how stale it is**, **what it will cost you to get it back**, and
 **what could go wrong** if you delete it. It removes only what you choose.
 
+It also finds local AI tooling — Ollama, LM Studio, ComfyUI, SillyTavern and
+Automatic1111 model/output directories — and flags when a tool looks like it's
+currently running so you don't pull a model out from under a live server. This
+group is large and opt-in: see [docs/providers.md](docs/providers.md#others).
+
 ![reclaim's terminal UI: sizes filling in live as each cache is measured, then sorted by how worthwhile they are to remove](docs/demo-tui.gif)
 
 `reclaim scan` prints the same thing without the interactive UI (excerpt from a

@@ -3,6 +3,20 @@
 All notable changes to `reclaim`. Versions follow [semver](https://semver.org);
 while the project is pre-1.0, breaking changes may land in a minor bump.
 
+## 0.1.5 — 2026-08-25
+
+### Added
+
+- **Local AI tooling detection.** The `ml.*` provider group, previously just
+  Ollama's model cache, now also finds LM Studio's model caches and — via the
+  same project walk every other artifact uses, refined by a marker file unique
+  to each tool — ComfyUI, SillyTavern and Automatic1111/stable-diffusion-webui
+  installs, offering their model/output/cache directories. A best-effort probe
+  of each tool's well-known local port (`providers.ai.check_running`, on by
+  default) adds a warning when the tool looks like it's running right now, so a
+  model isn't pulled out from under a live server. Still opt-in, same as the
+  rest of `ml.*` — model weights are large, deliberate downloads.
+
 ## 0.1.4 — 2026-08-11
 
 ### Fixed
