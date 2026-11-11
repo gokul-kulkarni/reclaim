@@ -678,3 +678,181 @@ code {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---- clean progress and results ---- */
+
+.run-panel {
+  max-width: 46rem;
+}
+
+.run-panel h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.meter {
+  height: 0.6rem;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 160ms ease-out;
+}
+
+.run-totals {
+  margin: 0.7rem 0 0.2rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.run-now {
+  margin: 0 0 0.6rem;
+  min-height: 1.3em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-log {
+  list-style: none;
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.run-log li {
+  display: grid;
+  grid-template-columns: 6.5rem 5.5rem 1fr;
+  gap: 0.5rem;
+  padding: 0.12rem 0;
+}
+
+.run-log:empty {
+  display: none;
+}
+
+.verb {
+  font-weight: 600;
+}
+
+.verb.removed,
+.verb.command,
+.ok-text {
+  color: var(--safe);
+}
+
+.verb.trashed {
+  color: var(--review);
+}
+
+.verb.failed,
+.bad-text {
+  color: var(--caution);
+}
+
+.verb.dry_run {
+  color: var(--accent);
+}
+
+.verb.gone {
+  color: var(--dim);
+}
+
+.run-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-stats {
+  margin: 0.4rem 0 0.8rem;
+}
+
+.card.caution .card-value {
+  color: var(--caution);
+}
+
+.run-section {
+  border-top: 1px solid var(--border);
+  padding-top: 0.7rem;
+  margin-top: 0.7rem;
+}
+
+.run-section h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.run-section.failed h3 {
+  color: var(--caution);
+}
+
+.run-section > p {
+  margin: 0.15rem 0 0.5rem;
+}
+
+.run-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.run-items > li {
+  padding: 0.35rem 0;
+}
+
+.run-items > li + li {
+  border-top: 1px dashed var(--border);
+}
+
+.run-row {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  gap: 0.5rem;
+}
+
+.run-where {
+  margin-left: 6rem;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.run-items .bad-text,
+.run-items .paths {
+  margin-left: 6rem;
+}
+
+button.link {
+  border: none;
+  background: none;
+  padding: 0 0 0 0.4rem;
+  color: var(--accent);
+  font-size: inherit;
+  cursor: pointer;
+}
+
+@media (max-width: 560px) {
+  .run-log li {
+    grid-template-columns: 5.5rem 1fr;
+  }
+
+  .run-log .num {
+    display: none;
+  }
+
+  .run-where,
+  .run-items .bad-text,
+  .run-items .paths {
+    margin-left: 0;
+  }
+}

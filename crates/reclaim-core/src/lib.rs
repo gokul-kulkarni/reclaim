@@ -24,6 +24,7 @@ pub mod large_files;
 pub mod model;
 pub mod pipeline;
 pub mod platform;
+pub mod progress;
 pub mod report;
 pub mod safety;
 pub mod staleness;
@@ -31,7 +32,7 @@ pub mod walk;
 
 pub use config::{Config, DeleteMode};
 pub use error::{Error, Result};
-pub use exec::{clean, trash_files, CleanEvent, CleanOptions};
+pub use exec::{clean, spawn_clean, trash_files, BackgroundClean, CleanEvent, CleanOptions};
 pub use journal::{Disposition, ItemOutcome, Journal, RunRecord, Trigger};
 pub use model::{
     Action, Candidate, CandidateBuilder, CandidateId, Group, Kind, ProjectRoot, Regen, Severity,
@@ -39,6 +40,7 @@ pub use model::{
 };
 pub use pipeline::{scan, Provider, ScanContext, ScanEvent, ScanResult};
 pub use platform::Paths;
+pub use progress::{CleanProgress, OutcomeSection};
 pub use report::HistoryReport;
 pub use safety::PathGuard;
 pub use staleness::Filter;

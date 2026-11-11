@@ -14,7 +14,8 @@ use reclaim_core::Paths;
 
 use crate::app::App;
 use crate::cli::LargeArgs;
-use crate::render::{self, Style};
+use crate::render::Style;
+use crate::run_view;
 
 pub fn run(app: &App, args: &LargeArgs, style: &Style) -> Result<u8> {
     let interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
@@ -55,7 +56,7 @@ pub fn run(app: &App, args: &LargeArgs, style: &Style) -> Result<u8> {
     }
 
     println!();
-    print!("{}", render::run_report(&record, style));
+    print!("{}", run_view::run_report(&record, &app.paths, style));
     if args.dry_run {
         println!(
             "\n{}",

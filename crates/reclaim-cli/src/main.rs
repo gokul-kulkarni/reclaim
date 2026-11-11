@@ -7,6 +7,7 @@ mod commands;
 mod large;
 mod render;
 mod report_html;
+mod run_view;
 mod schedule;
 mod tui;
 

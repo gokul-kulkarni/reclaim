@@ -133,6 +133,35 @@ pub fn clean(
     record
 }
 
+/// A clean running on its own thread, streaming [`CleanEvent`]s.
+///
+/// Front ends drain `events` to show progress, then [`join`](Self::join) for
+/// the record. The last event before the channel closes is
+/// [`CleanEvent::Finished`].
+pub struct BackgroundClean {
+    pub events: std::sync::mpsc::Receiver<CleanEvent>,
+    handle: std::thread::JoinHandle<RunRecord>,
+}
+
+impl BackgroundClean {
+    /// Wait for the run to end and return its record.
+    pub fn join(self) -> std::thread::Result<RunRecord> {
+        self.handle.join()
+    }
+}
+
+/// Start [`clean`] on a new thread. Takes owned values so the caller's thread
+/// stays free to draw while items are removed.
+pub fn spawn_clean(
+    candidates: Vec<Candidate>,
+    guard: PathGuard,
+    opts: CleanOptions,
+) -> BackgroundClean {
+    let (tx, events) = std::sync::mpsc::channel();
+    let handle = std::thread::spawn(move || clean(&candidates, &guard, &opts, Some(&tx)));
+    BackgroundClean { events, handle }
+}
+
 /// Provider id recorded in the journal for files removed via `reclaim large`.
 pub const LARGE_FILE_PROVIDER: &str = "files.large";
 
@@ -178,6 +207,7 @@ fn trash_one_file(file: &LargeFile, guard: &PathGuard, dry_run: bool) -> ItemOut
         freed_bytes: 0,
         disposition: Disposition::Skipped,
         error: None,
+        command: None,
     };
     // Another hardlink keeps the data alive, so even emptying the Trash gives
     // nothing back. Claiming those bytes would be a lie.
@@ -413,6 +443,20 @@ fn base_outcome(candidate: &Candidate) -> ItemOutcome {
         freed_bytes: 0,
         disposition: Disposition::Skipped,
         error: None,
+        command: shell_command(&candidate.action),
+    }
+}
+
+/// `program arg arg`, as a user would type it, for a shell action.
+fn shell_command(action: &Action) -> Option<String> {
+    match action {
+        Action::Shell { program, args } => Some(
+            std::iter::once(program.as_str())
+                .chain(args.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(" "),
+        ),
+        _ => None,
     }
 }
 
@@ -712,6 +756,62 @@ mod tests {
         let record = clean(&[candidate], &f.guard, &purge_opts(), None);
         assert_eq!(record.items[0].disposition, Disposition::CommandRun);
         assert_eq!(record.bytes_freed(), 999);
+    }
+
+    #[test]
+    fn a_command_item_records_what_ran() {
+        let candidate = CandidateBuilder::new("test.cmd", Group::System, "true")
+            .path("/nonexistent-marker")
+            .action(Action::Shell {
+                program: "true".into(),
+                args: vec!["llama3.2:latest".into()],
+            })
+            .build();
+        let f = fixture();
+        let record = clean(&[candidate], &f.guard, &purge_opts(), None);
+        assert_eq!(
+            record.items[0].command.as_deref(),
+            Some("true llama3.2:latest")
+        );
+
+        let path = make_tree(&f.home, ".cache/thing", 10);
+        let record = clean(
+            &[measured(&path, Tier::Safe, 10)],
+            &f.guard,
+            &purge_opts(),
+            None,
+        );
+        assert_eq!(
+            record.items[0].command, None,
+            "path removals have no command"
+        );
+    }
+
+    #[test]
+    fn a_background_clean_streams_progress_then_returns_the_record() {
+        let f = fixture();
+        let a = make_tree(&f.home, ".cache/a", 1024);
+        let b = make_tree(&f.home, ".cache/b", 2048);
+        let run = spawn_clean(
+            vec![
+                measured(&a, Tier::Safe, 1024),
+                measured(&b, Tier::Safe, 2048),
+            ],
+            f.guard.clone(),
+            purge_opts(),
+        );
+
+        let mut progress = crate::progress::CleanProgress::new(false);
+        for event in run.events.iter() {
+            progress.apply(event);
+        }
+        let record = run.join().unwrap();
+
+        assert!(progress.is_finished());
+        assert_eq!(progress.done, 2);
+        assert_eq!(progress.freed, record.bytes_freed());
+        assert_eq!(progress.record.as_ref(), Some(&record));
+        assert!(!a.exists() && !b.exists());
     }
 
     #[test]

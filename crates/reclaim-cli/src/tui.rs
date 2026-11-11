@@ -18,8 +18,9 @@ use crossterm::ExecutableCommand;
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 
-use reclaim_core::exec::{self, CleanOptions};
+use reclaim_core::exec::CleanOptions;
 use reclaim_core::format::bytes;
+use reclaim_core::journal::RunRecord;
 use reclaim_core::journal::Trigger;
 use reclaim_core::model::{humanize_age, Candidate, CandidateId, Severity, Tier};
 use reclaim_core::pipeline::{self, ScanEvent};
@@ -27,12 +28,19 @@ use reclaim_core::staleness::Filter;
 
 use crate::app::App;
 
+mod clean_view;
+use clean_view::{Cleaning, Poll};
+
 /// What the user is looking at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
     List,
     Detail,
     ConfirmClean,
+    /// A clean is running; keys are ignored until it ends.
+    Cleaning,
+    /// What the last clean did, item by item.
+    Results,
     Help,
 }
 
@@ -80,8 +88,13 @@ struct Ui {
     status: String,
     dry_run: bool,
     quit: bool,
-    /// Advances once per redraw while `scanning`, driving `SPINNER`.
+    /// Advances once per redraw while scanning or cleaning, driving `SPINNER`.
     spinner_tick: usize,
+    /// The clean in flight, if any.
+    cleaning: Option<Cleaning>,
+    /// The last finished clean, shown on the results screen.
+    last_run: Option<RunRecord>,
+    results_scroll: u16,
 }
 
 impl Ui {
@@ -100,6 +113,9 @@ impl Ui {
             dry_run: false,
             quit: false,
             spinner_tick: 0,
+            cleaning: None,
+            last_run: None,
+            results_scroll: 0,
         }
     }
 
@@ -218,9 +234,10 @@ fn event_loop<B: Backend + io::Write>(
 
         while !ui.quit {
             drain_scan_events(&mut ui, &rx);
+            drain_clean_events(&mut ui, app);
 
             if last_draw.elapsed() >= tick {
-                if ui.scanning {
+                if ui.scanning || ui.cleaning.is_some() {
                     ui.spinner_tick = ui.spinner_tick.wrapping_add(1);
                 }
                 terminal.draw(|frame| draw(frame, &ui, app))?;
@@ -314,15 +331,18 @@ fn handle_key(ui: &mut Ui, app: &App, key: KeyEvent) -> Result<()> {
         }
         Screen::ConfirmClean => {
             match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') => {
-                    perform_clean(ui, app)?;
-                    ui.screen = Screen::List;
-                }
+                KeyCode::Char('y') | KeyCode::Char('Y') => start_clean(ui, app),
                 _ => {
                     ui.screen = Screen::List;
                     ui.status = "Cancelled. Nothing was removed.".into();
                 }
             }
+            return Ok(());
+        }
+        // Nothing but ctrl-c (handled above) interrupts a run in progress.
+        Screen::Cleaning => return Ok(()),
+        Screen::Results => {
+            handle_results_key(ui, app, key);
             return Ok(());
         }
         Screen::List => {}
@@ -373,19 +393,42 @@ fn handle_key(ui: &mut Ui, app: &App, key: KeyEvent) -> Result<()> {
     Ok(())
 }
 
-fn perform_clean(ui: &mut Ui, app: &App) -> Result<()> {
-    let chosen = ui.chosen();
+fn start_clean(ui: &mut Ui, app: &App) {
     let options = CleanOptions {
         dry_run: ui.dry_run,
         mode: app.config.delete.mode,
         trigger: Trigger::Tui,
         concurrency: app.config.scan.threads(),
     };
+    ui.cleaning = Some(Cleaning::start(ui.chosen(), app.guard.clone(), options));
+    ui.screen = Screen::Cleaning;
+}
 
-    let record = exec::clean(&chosen, &app.guard, &options, None);
-    let _ = app.journal.write(&record);
+/// Fold in the running clean's progress; on completion, journal it and show
+/// the results screen.
+fn drain_clean_events(ui: &mut Ui, app: &App) {
+    let Some(cleaning) = ui.cleaning.as_mut() else {
+        return;
+    };
+    match cleaning.poll() {
+        Poll::Running => {}
+        Poll::Finished(record) => {
+            ui.cleaning = None;
+            finish_clean(ui, app, record);
+        }
+        Poll::Lost => {
+            ui.cleaning = None;
+            ui.screen = Screen::List;
+            ui.status = "The clean stopped unexpectedly. Rescan to see what is left.".into();
+        }
+    }
+}
 
-    ui.status = record.summary();
+fn finish_clean(ui: &mut Ui, app: &App, record: RunRecord) {
+    ui.status = match app.journal.write(&record) {
+        Ok(_) => record.summary(),
+        Err(e) => format!("{} (could not write run history: {e})", record.summary()),
+    };
 
     // Drop what actually went away, keep what failed so the user can see it.
     let removed: BTreeSet<CandidateId> = record
@@ -394,13 +437,35 @@ fn perform_clean(ui: &mut Ui, app: &App) -> Result<()> {
         .filter(|i| i.disposition != reclaim_core::Disposition::Failed)
         .map(|i| i.id.clone())
         .collect();
-    if !ui.dry_run {
+    if !record.dry_run {
         ui.candidates.retain(|c| !removed.contains(&c.id));
         ui.selected.retain(|id| !removed.contains(id));
     }
     ui.cursor = 0;
+    ui.last_run = Some(record);
+    ui.results_scroll = 0;
+    ui.screen = Screen::Results;
+}
 
-    Ok(())
+/// Scroll keys move through the results; anything else closes them.
+fn handle_results_key(ui: &mut Ui, app: &App, key: KeyEvent) {
+    let lines = ui
+        .last_run
+        .as_ref()
+        .map(|r| clean_view::results_lines(r, &app.paths).len())
+        .unwrap_or(0);
+    let max = u16::try_from(lines.saturating_sub(1)).unwrap_or(u16::MAX);
+    let step = |by: i32| (i32::from(ui.results_scroll) + by).clamp(0, i32::from(max)) as u16;
+    ui.results_scroll = match key.code {
+        KeyCode::Up | KeyCode::Char('k') => step(-1),
+        KeyCode::Down | KeyCode::Char('j') => step(1),
+        KeyCode::PageUp => step(-10),
+        KeyCode::PageDown => step(10),
+        _ => {
+            ui.screen = Screen::List;
+            return;
+        }
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -425,6 +490,18 @@ fn draw(frame: &mut Frame, ui: &Ui, app: &App) {
         Screen::Detail => draw_detail(frame, ui, app),
         Screen::Help => draw_help(frame),
         Screen::ConfirmClean => draw_confirm(frame, ui),
+        Screen::Cleaning => {
+            if let Some(cleaning) = &ui.cleaning {
+                let area = centered(frame.area(), 70, 70);
+                clean_view::draw_cleaning(frame, area, &cleaning.progress, ui.spinner());
+            }
+        }
+        Screen::Results => {
+            if let Some(record) = &ui.last_run {
+                let area = centered(frame.area(), 80, 80);
+                clean_view::draw_results(frame, area, record, &app.paths, ui.results_scroll);
+            }
+        }
         Screen::List => {}
     }
 }
@@ -1165,5 +1242,110 @@ mod tests {
         for (w, h) in [(20u16, 10u16), (40, 12), (200, 60)] {
             let _ = render(&ui, &app, w, h);
         }
+    }
+
+    /// Start a clean and pump its events until the results screen appears.
+    fn run_to_results(ui: &mut Ui, app: &App) {
+        start_clean(ui, app);
+        assert_eq!(ui.screen, Screen::Cleaning);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while ui.screen == Screen::Cleaning {
+            assert!(Instant::now() < deadline, "the clean never finished");
+            drain_clean_events(ui, app);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn a_clean_runs_in_the_background_then_shows_grouped_results() {
+        let (tmp, app) = test_app();
+        let dir = tmp.path().join(".cache/thing");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("blob"), vec![0u8; 4096]).unwrap();
+        let mut c = candidate("thing cache", Tier::Safe, 4096, 100);
+        c.paths = vec![dir.canonicalize().unwrap()];
+
+        let mut ui = ui_with(vec![c]);
+        ui.dry_run = true;
+        ui.toggle_current();
+        run_to_results(&mut ui, &app);
+
+        assert_eq!(ui.screen, Screen::Results);
+        assert!(ui.cleaning.is_none());
+        assert!(dir.exists(), "a dry run must not delete");
+        let frame = render(&ui, &app, 110, 30);
+        assert!(frame.contains("Would be reclaimed"), "{frame}");
+        assert!(frame.contains("thing cache"), "{frame}");
+        assert!(frame.contains("~/.cache/thing"), "{frame}");
+
+        // Scrolling stays on the results; any other key closes them.
+        handle_results_key(&mut ui, &app, KeyEvent::from(KeyCode::Down));
+        assert_eq!(ui.screen, Screen::Results);
+        handle_results_key(&mut ui, &app, KeyEvent::from(KeyCode::Enter));
+        assert_eq!(ui.screen, Screen::List);
+    }
+
+    #[test]
+    fn the_progress_overlay_shows_the_gauge_totals_and_finished_items() {
+        let mut progress = reclaim_core::CleanProgress::new(false);
+        progress.apply(reclaim_core::CleanEvent::Started {
+            total: 2,
+            bytes: 3000,
+        });
+        progress.apply(reclaim_core::CleanEvent::ItemStarted {
+            id: CandidateId("a".into()),
+            label: "npm cache".into(),
+        });
+        progress.apply(reclaim_core::CleanEvent::ItemStarted {
+            id: CandidateId("b".into()),
+            label: "pip cache".into(),
+        });
+        let done = reclaim_core::ItemOutcome {
+            id: CandidateId("a".into()),
+            provider: "node.npm-cache".into(),
+            group: Group::Node,
+            label: "npm cache".into(),
+            tier: Tier::Safe,
+            paths: vec![],
+            expected_bytes: 1000,
+            freed_bytes: 1000,
+            disposition: reclaim_core::Disposition::Purged,
+            error: None,
+            command: None,
+        };
+        progress.apply(reclaim_core::CleanEvent::ItemFinished(Box::new(
+            done.clone(),
+        )));
+
+        let area = Rect::new(0, 0, 90, 20);
+        let backend = ratatui::backend::TestBackend::new(90, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| clean_view::draw_cleaning(frame, area, &progress, '*'))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let text: String = (0..20)
+            .map(|y| {
+                (0..90)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect();
+        assert!(text.contains("Reclaiming 2.93 KB from 2 item(s)"), "{text}");
+        assert!(text.contains("1 of 2"), "{text}");
+        assert!(text.contains("1000 B freed"), "{text}");
+        assert!(text.contains("Now: pip cache"), "{text}");
+        assert!(text.contains("deleted"), "{text}");
+    }
+
+    #[test]
+    fn keys_are_ignored_while_a_clean_runs() {
+        let (_tmp, app) = test_app();
+        let mut ui = ui_with(vec![candidate("npm cache", Tier::Safe, 1024, 100)]);
+        ui.screen = Screen::Cleaning;
+        handle_key(&mut ui, &app, KeyEvent::from(KeyCode::Char('q'))).unwrap();
+        assert!(!ui.quit);
+        assert_eq!(ui.screen, Screen::Cleaning);
     }
 }

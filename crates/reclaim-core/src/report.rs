@@ -268,6 +268,7 @@ mod tests {
             freed_bytes: bytes,
             disposition,
             error: None,
+            command: None,
         }
     }
 

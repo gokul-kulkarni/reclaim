@@ -12,6 +12,7 @@
 
 mod api;
 mod assets;
+mod clean;
 mod state;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};

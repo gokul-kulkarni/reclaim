@@ -58,6 +58,11 @@ pub struct ItemOutcome {
     pub freed_bytes: u64,
     pub disposition: Disposition,
     pub error: Option<String>,
+    /// The command that did the reclaiming, for items cleaned by an external
+    /// tool (`ollama rm llama3.2:latest`). Absent for path removals, and in
+    /// records written before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -274,6 +279,7 @@ mod tests {
             freed_bytes: bytes,
             disposition,
             error: None,
+            command: None,
         }
     }
 

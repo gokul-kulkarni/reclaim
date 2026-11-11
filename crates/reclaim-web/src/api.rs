@@ -8,9 +8,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use reclaim_core::exec::{self, CleanOptions};
 use reclaim_core::format::{epoch_millis, relative_time};
-use reclaim_core::journal::Trigger;
 use reclaim_core::model::{humanize_age, Candidate};
 use reclaim_core::pipeline;
 use reclaim_core::report::HistoryReport;
@@ -22,7 +20,7 @@ pub fn router(state: ServerState) -> Router {
     let api = Router::new()
         .route("/scan", get(scan))
         .route("/candidates", get(candidates))
-        .route("/clean", post(clean))
+        .route("/clean", post(crate::clean::clean))
         .route("/history", get(history))
         .route("/config", get(config))
         .route("/providers", get(providers))
@@ -254,110 +252,6 @@ async fn candidates(
     Ok(Json(views))
 }
 
-#[derive(Debug, Deserialize)]
-struct CleanRequest {
-    ids: Vec<String>,
-    #[serde(default = "default_true")]
-    dry_run: bool,
-    /// Explicit acknowledgement for caution-tier items. Without it they are skipped.
-    #[serde(default)]
-    confirm_caution: bool,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-#[derive(Debug, Serialize)]
-struct CleanResponse {
-    dry_run: bool,
-    bytes_freed: u64,
-    bytes_trashed: u64,
-    succeeded: bool,
-    summary: String,
-    skipped_caution: usize,
-    items: Vec<CleanItemView>,
-}
-
-#[derive(Debug, Serialize)]
-struct CleanItemView {
-    id: String,
-    label: String,
-    disposition: String,
-    freed_bytes: u64,
-    error: Option<String>,
-}
-
-async fn clean(
-    State(state): State<ServerState>,
-    Json(request): Json<CleanRequest>,
-) -> Result<Json<CleanResponse>, ApiError> {
-    // Ids are resolved against the last scan, so the browser can only ever name
-    // something this process already measured and vetted.
-    let mut chosen = state.candidates_by_id(&request.ids);
-
-    if chosen.is_empty() {
-        return Err(ApiError::bad_request(
-            "no matching candidates: run a scan first, then send ids from that scan",
-        ));
-    }
-
-    let mut skipped_caution = 0;
-    if state.config.delete.confirm_caution && !request.confirm_caution {
-        let before = chosen.len();
-        chosen.retain(|c| c.tier != reclaim_core::Tier::Caution);
-        skipped_caution = before - chosen.len();
-    }
-
-    if chosen.is_empty() {
-        return Ok(Json(CleanResponse {
-            dry_run: request.dry_run,
-            bytes_freed: 0,
-            bytes_trashed: 0,
-            succeeded: true,
-            summary: "nothing to do: all selected items need explicit confirmation".into(),
-            skipped_caution,
-            items: Vec::new(),
-        }));
-    }
-
-    let options = CleanOptions {
-        dry_run: request.dry_run,
-        mode: state.config.delete.mode,
-        trigger: Trigger::Web,
-        concurrency: state.config.scan.threads(),
-    };
-
-    let exec_state = state.clone();
-    let record = tokio::task::spawn_blocking(move || {
-        exec::clean(&chosen, &exec_state.guard, &options, None)
-    })
-    .await
-    .map_err(|e| ApiError::internal(format!("clean failed: {e}")))?;
-
-    let _ = state.journal.write(&record);
-
-    Ok(Json(CleanResponse {
-        dry_run: record.dry_run,
-        bytes_freed: record.bytes_freed(),
-        bytes_trashed: record.bytes_trashed(),
-        succeeded: record.succeeded(),
-        summary: record.summary(),
-        skipped_caution,
-        items: record
-            .items
-            .iter()
-            .map(|i| CleanItemView {
-                id: i.id.0.clone(),
-                label: i.label.clone(),
-                disposition: format!("{:?}", i.disposition).to_lowercase(),
-                freed_bytes: i.freed_bytes,
-                error: i.error.clone(),
-            })
-            .collect(),
-    }))
-}
-
 /// The aggregate history report the frontend consumes.
 ///
 /// Same shape `reclaim history report`'s HTML export renders, converted to a
@@ -576,14 +470,14 @@ impl ApiError {
         }
     }
 
-    fn bad_request(message: impl Into<String>) -> Self {
+    pub(crate) fn bad_request(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
             message: message.into(),
         }
     }
 
-    fn internal(message: impl Into<String>) -> Self {
+    pub(crate) fn internal(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: message.into(),
@@ -848,6 +742,92 @@ mod tests {
 
         assert_eq!(result["succeeded"], true);
         assert!(!cache.exists(), "the selected candidate should be gone");
+    }
+
+    #[tokio::test]
+    async fn a_clean_reports_each_item_with_its_section_and_paths() {
+        let (_tmp, state) = populated_state();
+        let scan = json_of(state.clone(), get(state.clone(), "/api/scan?all=true")).await;
+        let id = scan["candidates"][0]["id"].as_str().unwrap().to_string();
+
+        let body = format!(r#"{{"ids":["{id}"],"dry_run":false}}"#);
+        let result = json_of(state.clone(), post_json(&state, "/api/clean", &body)).await;
+
+        let item = &result["items"][0];
+        assert_eq!(item["section"], "removed");
+        assert!(
+            item["paths"][0].as_str().unwrap().starts_with("~/"),
+            "{item}"
+        );
+        assert_eq!(item["shown_bytes"], item["freed_bytes"]);
+        let section = &result["sections"][0];
+        assert_eq!(section["key"], "removed");
+        assert_eq!(section["ids"][0], id.as_str());
+        assert!(!section["heading"].as_str().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_streamed_clean_sends_progress_lines_then_the_result() {
+        let (_tmp, state) = populated_state();
+        let cache = state.paths.home_join(".npm/_cacache");
+        let scan = json_of(state.clone(), get(state.clone(), "/api/scan?all=true")).await;
+        let ids: Vec<String> = scan["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["id"].as_str().unwrap().to_string())
+            .collect();
+
+        let body = serde_json::json!({ "ids": ids, "dry_run": false }).to_string();
+        let (status, text) = send(
+            state.clone(),
+            post_json(&state, "/api/clean?stream=true", &body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{text}");
+
+        let lines: Vec<serde_json::Value> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(lines.first().unwrap()["type"], "started");
+        assert_eq!(lines.first().unwrap()["total"], ids.len());
+        let finished_items = lines
+            .iter()
+            .filter(|l| l["type"] == "item_finished")
+            .count();
+        assert_eq!(finished_items, ids.len());
+        let last = lines.last().unwrap();
+        assert_eq!(last["type"], "finished");
+        assert_eq!(last["result"]["succeeded"], true);
+        assert!(!cache.exists(), "the stream must really clean");
+
+        // The streamed run is journalled like any other.
+        let history = json_of(state.clone(), get(state.clone(), "/api/history")).await;
+        assert_eq!(history["real_runs"], 1);
+    }
+
+    #[tokio::test]
+    async fn a_streamed_clean_with_nothing_left_sends_just_the_result() {
+        let (_tmp, state) = populated_state();
+        let scan = json_of(state.clone(), get(state.clone(), "/api/scan?all=true")).await;
+        {
+            let mut slot = state.last_scan.write().unwrap();
+            for candidate in slot.as_mut().unwrap().all.iter_mut() {
+                candidate.tier = reclaim_core::Tier::Caution;
+            }
+        }
+        let id = scan["candidates"][0]["id"].as_str().unwrap().to_string();
+        let body = format!(r#"{{"ids":["{id}"],"dry_run":false}}"#);
+        let (_, text) = send(
+            state.clone(),
+            post_json(&state, "/api/clean?stream=true", &body),
+        )
+        .await;
+
+        let line: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
+        assert_eq!(line["type"], "finished");
+        assert_eq!(line["result"]["skipped_caution"], 1);
     }
 
     #[tokio::test]

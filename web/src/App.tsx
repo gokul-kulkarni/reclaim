@@ -4,6 +4,8 @@ import type { Candidate, CleanResponse, HistoryReport, ScanResponse } from "./ap
 import { Treemap } from "./Treemap";
 import { Scatter } from "./Scatter";
 import { History } from "./History";
+import { advance, ProgressPanel, ResultsPanel, startProgress } from "./CleanRun";
+import type { RunProgress } from "./CleanRun";
 
 type View = "treemap" | "scatter" | "table" | "history";
 type SortKey = "score" | "size" | "age" | "name";
@@ -19,6 +21,7 @@ export default function App() {
   const [inspecting, setInspecting] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [result, setResult] = useState<CleanResponse | null>(null);
+  const [running, setRunning] = useState<RunProgress | null>(null);
   const [history, setHistory] = useState<HistoryReport | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -120,21 +123,39 @@ export default function App() {
   const doClean = async (dryRun: boolean) => {
     setBusy(true);
     setError(null);
+    setConfirming(false);
+    setRunning(startProgress(dryRun, chosen.length, chosenBytes));
     try {
-      const response = await api.clean([...selected], dryRun, cautionChosen.length > 0);
+      const response = await api.cleanStream(
+        [...selected],
+        dryRun,
+        cautionChosen.length > 0,
+        (event) => setRunning((prev) => (prev ? advance(prev, event) : prev))
+      );
       setResult(response);
-      setConfirming(false);
-      if (!dryRun) {
-        await runScan();
-        // A real clean changes lifetime totals; refresh an already-open
-        // history tab rather than leaving it showing stale numbers.
-        if (history) void loadHistory();
-      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      // Some items may already be gone; show what is left rather than a stale list.
+      if (!dryRun) void afterRealClean();
     } finally {
+      setRunning(null);
       setBusy(false);
     }
+  };
+
+  const afterRealClean = async () => {
+    await runScan();
+    // A real clean changes lifetime totals; refresh an already-open
+    // history tab rather than leaving it showing stale numbers.
+    if (history) void loadHistory();
+  };
+
+  // The list is rescanned only once the results are closed, so it does not
+  // change underneath the user while they read what happened.
+  const closeResults = () => {
+    const wasReal = result !== null && !result.dry_run;
+    setResult(null);
+    if (wasReal) void afterRealClean();
   };
 
   const inspected = scan?.candidates.find((c) => c.id === inspecting) ?? null;
@@ -174,18 +195,6 @@ export default function App() {
           these totals are a lower bound.
         </div>
       ) : null}
-
-      {result && (
-        <div className={`banner ${result.succeeded ? "ok" : "error"}`}>
-          <strong>{result.dry_run ? "Dry run." : "Done."}</strong> {result.summary}
-          {result.bytes_trashed > 0 && (
-            <> {formatBytes(result.bytes_trashed)} is in the Trash and still uses disk until you empty it.</>
-          )}
-          {result.skipped_caution > 0 && (
-            <> {result.skipped_caution} caution-tier item(s) were skipped.</>
-          )}
-        </div>
-      )}
 
       <nav className="views">
         {(["treemap", "scatter", "table", "history"] as View[]).map((v) => (
@@ -301,6 +310,9 @@ export default function App() {
       )}
 
       {inspected && <Detail candidate={inspected} onClose={() => setInspecting(null)} />}
+
+      {running && <ProgressPanel progress={running} />}
+      {result && !running && <ResultsPanel result={result} onClose={closeResults} />}
 
       {confirming && (
         <Confirm

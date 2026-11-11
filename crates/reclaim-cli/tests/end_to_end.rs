@@ -136,7 +136,7 @@ fn a_dry_run_reports_but_removes_nothing() {
         .args(["--older-than", "0", "--dry-run"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("would remove"))
+        .stdout(predicate::str::contains("Would be reclaimed"))
         .stdout(predicate::str::contains("dry run"));
 
     assert!(sandbox.path(".npm/_cacache/blob").exists());
@@ -175,8 +175,9 @@ fn clean_with_yes_removes_and_reports_the_bytes() {
         .args(["--older-than", "0", "--yes", "--purge"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("removed"))
-        .stdout(predicate::str::contains("freed"));
+        .stdout(predicate::str::contains("Deleted ·"))
+        .stdout(predicate::str::contains("~/dev/app/node_modules"))
+        .stdout(predicate::str::contains("Freed now:"));
 
     assert!(!sandbox.path(".npm/_cacache").exists());
     assert!(!sandbox.path("dev/app/node_modules").exists());

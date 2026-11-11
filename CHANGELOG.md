@@ -3,6 +3,30 @@
 All notable changes to `reclaim`. Versions follow [semver](https://semver.org);
 while the project is pre-1.0, breaking changes may land in a minor bump.
 
+## Unreleased
+
+### Changed
+
+- **You can now watch a clean as it runs, and see clearly what happened.**
+  - **While it runs:** all three front ends show progress — item n of N,
+    space freed so far, space sent to the Trash, failures, the item being
+    removed now, and each item's result as it finishes.
+    - `reclaim clean` draws a live line on stderr.
+    - The terminal UI keeps redrawing, because the removal now runs in the
+      background.
+    - The web UI shows a progress panel. `POST /api/clean?stream=true` streams
+      progress as one JSON object per line.
+  - **When it ends:** every front end shows the results grouped by what
+    happened to each item: failed (listed first, with the reason), deleted,
+    cleaned by a command, moved to the Trash, or already gone. Each item shows
+    its size and its path, or the command that ran (`ollama rm …`). Space freed
+    now is shown apart from space still sitting in the Trash.
+    - The terminal UI shows a scrollable results screen.
+    - The web UI shows a results panel and rescans only after you close it, so
+      the list doesn't change while you read the results.
+- Run history now records the command that cleaned an item, when a command
+  did.
+
 ## 0.1.6 — 2026-11-11
 
 ### Added

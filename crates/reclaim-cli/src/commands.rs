@@ -14,6 +14,7 @@ use crate::cli::{
     CleanArgs, ConfigAction, HistoryAction, HistoryArgs, HistoryReportArgs, ScanArgs,
 };
 use crate::render::{self, Style};
+use crate::run_view;
 
 pub fn scan(app: &App, args: &ScanArgs, style: &Style) -> Result<()> {
     let filter = app.filter(
@@ -101,7 +102,7 @@ pub fn clean(app: &App, args: &CleanArgs, style: &Style) -> Result<i32> {
         concurrency: app.config.scan.threads(),
     };
 
-    let record = exec::clean(&chosen, &app.guard, &options, None);
+    let record = run_view::run_clean(chosen, &app.guard, options, &app.paths, style);
 
     if let Err(e) = app.journal.write(&record) {
         // Failing to journal must not make a successful cleanup look failed.
@@ -115,7 +116,7 @@ pub fn clean(app: &App, args: &CleanArgs, style: &Style) -> Result<i32> {
     if args.json {
         println!("{}", serde_json::to_string_pretty(&record)?);
     } else {
-        print!("{}", render::run_report(&record, style));
+        print!("{}", run_view::run_report(&record, &app.paths, style));
         if dry_run {
             println!(
                 "\n{}",

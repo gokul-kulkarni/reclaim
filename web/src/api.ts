@@ -51,12 +51,31 @@ export interface ScanResponse {
   candidates: Candidate[];
 }
 
+export type SectionKey = "failed" | "removed" | "command" | "trashed" | "dry_run" | "gone";
+
 export interface CleanItem {
   id: string;
   label: string;
   disposition: string;
+  section: SectionKey;
   freed_bytes: number;
+  expected_bytes: number;
+  /** What was freed, or what was expected when nothing was. */
+  shown_bytes: number;
+  /** Paths with the home directory shortened to `~`. */
+  paths: string[];
+  /** The command that reclaimed it, for items cleaned by a tool. */
+  command: string | null;
   error: string | null;
+}
+
+export interface CleanSection {
+  key: SectionKey;
+  heading: string;
+  explanation: string;
+  bytes: number;
+  /** Item ids in display order. */
+  ids: string[];
 }
 
 export interface CleanResponse {
@@ -67,7 +86,15 @@ export interface CleanResponse {
   summary: string;
   skipped_caution: number;
   items: CleanItem[];
+  sections: CleanSection[];
 }
+
+/** One line of `POST /api/clean?stream=true`. */
+export type CleanEvent =
+  | { type: "started"; total: number; bytes: number }
+  | { type: "item_started"; id: string; label: string }
+  | { type: "item_finished"; item: CleanItem }
+  | { type: "finished"; result: CleanResponse };
 
 export interface GroupStats {
   group: string;
@@ -159,18 +186,67 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
 
-  if (!response.ok) {
-    let message = `${response.status} ${response.statusText}`;
-    try {
-      const body = await response.json();
-      if (body?.error) message = body.error;
-    } catch {
-      // Keep the status line if the body is not JSON.
-    }
-    throw new Error(message);
-  }
-
+  if (!response.ok) throw await failure(response);
   return (await response.json()) as T;
+}
+
+async function failure(response: Response): Promise<Error> {
+  let message = `${response.status} ${response.statusText}`;
+  try {
+    const body = await response.json();
+    if (body?.error) message = body.error;
+  } catch {
+    // Keep the status line if the body is not JSON.
+  }
+  return new Error(message);
+}
+
+/**
+ * Run a clean, calling `onEvent` for each progress line as it arrives, and
+ * resolve with the final result.
+ */
+async function cleanStream(
+  ids: string[],
+  dryRun: boolean,
+  confirmCaution: boolean,
+  onEvent: (event: CleanEvent) => void
+): Promise<CleanResponse> {
+  const response = await fetch("/api/clean?stream=true", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-reclaim-token": TOKEN },
+    body: JSON.stringify({ ids, dry_run: dryRun, confirm_caution: confirmCaution }),
+  });
+  if (!response.ok) throw await failure(response);
+  if (!response.body) throw new Error("the server sent no progress stream");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  // Held in an object: TypeScript does not track assignments made in a closure.
+  const final: { result: CleanResponse | null } = { result: null };
+
+  const handle = (line: string) => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line) as CleanEvent | { type: "error"; message: string };
+    if (event.type === "error") throw new Error(event.message);
+    if (event.type === "finished") final.result = event.result;
+    onEvent(event);
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    pending += decoder.decode(value, { stream: true });
+    const lines = pending.split("\n");
+    pending = lines.pop() ?? "";
+    lines.forEach(handle);
+  }
+  handle(pending + decoder.decode());
+
+  if (!final.result) {
+    throw new Error("the run ended without a result; rescan to see what is left");
+  }
+  return final.result;
 }
 
 export const api = {
@@ -183,6 +259,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ ids, dry_run: dryRun, confirm_caution: confirmCaution }),
     }),
+
+  cleanStream,
 
   history: () => request<HistoryReport>("/history"),
 };

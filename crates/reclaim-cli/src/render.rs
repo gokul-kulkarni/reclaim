@@ -8,7 +8,7 @@
 use std::fmt::Write as _;
 
 use reclaim_core::format::{bytes, ellipsize, relative_time};
-use reclaim_core::journal::{Disposition, RunRecord};
+use reclaim_core::journal::RunRecord;
 use reclaim_core::model::{humanize_age, Candidate, Severity, Tier};
 use reclaim_core::pipeline::ScanResult;
 use reclaim_core::Paths;
@@ -238,56 +238,6 @@ pub fn clean_preview(candidates: &[Candidate], paths: &Paths, style: &Style) -> 
     out
 }
 
-/// Result of a completed run.
-pub fn run_report(record: &RunRecord, style: &Style) -> String {
-    let mut out = String::new();
-
-    for item in &record.items {
-        let (mark, colour): (&str, fn(&Style, &str) -> String) = match item.disposition {
-            Disposition::Purged => ("removed", |s, t| s.green(t)),
-            Disposition::Trashed => ("trashed", |s, t| s.green(t)),
-            Disposition::CommandRun => ("cleaned", |s, t| s.green(t)),
-            Disposition::DryRun => ("would remove", |s, t| s.cyan(t)),
-            Disposition::Skipped => ("already gone", |s, t| s.dim(t)),
-            Disposition::Failed => ("FAILED", |s, t| s.red(t)),
-        };
-
-        let _ = writeln!(
-            out,
-            "  {:<14} {:>9}  {}",
-            colour(style, mark),
-            bytes(if item.disposition == Disposition::DryRun {
-                item.expected_bytes
-            } else {
-                item.freed_bytes
-            }),
-            item.label
-        );
-
-        if let Some(error) = &item.error {
-            let _ = writeln!(out, "                 {}", style.red(error));
-        }
-    }
-
-    let _ = writeln!(out);
-    let _ = writeln!(out, "{}", style.bold(&record.summary()));
-
-    // Trashed bytes have not actually been returned to the filesystem yet, and
-    // saying otherwise would be the most misleading thing this tool could do.
-    if record.bytes_trashed() > 0 {
-        let _ = writeln!(
-            out,
-            "{}",
-            style.yellow(&format!(
-                "{} is in the Trash and still occupies disk until you empty it.",
-                bytes(record.bytes_trashed())
-            ))
-        );
-    }
-
-    out
-}
-
 /// `reclaim history` table.
 pub fn history_report(records: &[RunRecord], style: &Style) -> String {
     if records.is_empty() {
@@ -323,7 +273,6 @@ pub fn history_report(records: &[RunRecord], style: &Style) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reclaim_core::journal::{ItemOutcome, Trigger};
     use reclaim_core::model::{CandidateBuilder, CandidateId, Group, Signals, Size, Warning};
     use std::time::SystemTime;
 
@@ -507,66 +456,6 @@ mod tests {
             text.contains("shared"),
             "hardlinked bytes must be visible: {text}"
         );
-    }
-
-    #[test]
-    fn a_run_report_separates_trashed_from_freed() {
-        let mut record = RunRecord::new(Trigger::Cli, false);
-        record.items = vec![
-            ItemOutcome {
-                id: CandidateId("a".into()),
-                provider: "node.npm-cache".into(),
-                group: Group::Node,
-                label: "npm cache".into(),
-                tier: Tier::Safe,
-                paths: vec!["/home/t/.npm".into()],
-                expected_bytes: 1000,
-                freed_bytes: 1000,
-                disposition: Disposition::Purged,
-                error: None,
-            },
-            ItemOutcome {
-                id: CandidateId("b".into()),
-                provider: "apple.archives".into(),
-                group: Group::Apple,
-                label: "Xcode Archives".into(),
-                tier: Tier::Caution,
-                paths: vec!["/home/t/Archives".into()],
-                expected_bytes: 5000,
-                freed_bytes: 5000,
-                disposition: Disposition::Trashed,
-                error: None,
-            },
-        ];
-
-        let text = run_report(&record, &Style::plain());
-        assert!(text.contains("removed"), "{text}");
-        assert!(text.contains("trashed"), "{text}");
-        assert!(
-            text.contains("still occupies disk"),
-            "trashed bytes must not be presented as freed: {text}"
-        );
-    }
-
-    #[test]
-    fn failures_show_their_error_text() {
-        let mut record = RunRecord::new(Trigger::Cli, false);
-        record.items = vec![ItemOutcome {
-            id: CandidateId("a".into()),
-            provider: "x.y".into(),
-            group: Group::Node,
-            label: "thing".into(),
-            tier: Tier::Safe,
-            paths: vec!["/x".into()],
-            expected_bytes: 10,
-            freed_bytes: 0,
-            disposition: Disposition::Failed,
-            error: Some("permission denied".into()),
-        }];
-
-        let text = run_report(&record, &Style::plain());
-        assert!(text.contains("FAILED"), "{text}");
-        assert!(text.contains("permission denied"), "{text}");
     }
 
     #[test]
