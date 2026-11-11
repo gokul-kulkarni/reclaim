@@ -345,6 +345,7 @@ mod tests {
                 artifact_atime: None,
                 source_mtime: None,
                 vcs_activity: None,
+                opened: None,
                 last_used_days: days,
                 active_now: false,
             },

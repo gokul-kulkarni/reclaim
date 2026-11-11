@@ -19,7 +19,8 @@ use rayon::prelude::*;
 use crate::config::DeleteMode;
 use crate::error::Error;
 use crate::journal::{Disposition, ItemOutcome, RunRecord, Trigger};
-use crate::model::{Action, Candidate, Tier};
+use crate::large_files::LargeFile;
+use crate::model::{Action, Candidate, CandidateId, Group, Tier};
 use crate::safety::PathGuard;
 
 /// Progress emitted while a run executes, so both front-ends can show live status.
@@ -132,8 +133,162 @@ pub fn clean(
     record
 }
 
+/// Provider id recorded in the journal for files removed via `reclaim large`.
+pub const LARGE_FILE_PROVIDER: &str = "files.large";
+
+/// Move individual large files the user picked to the Trash.
+///
+/// Separate from [`clean`] because the subject is different: these are the
+/// user's own files, not caches, so nothing about them is known to be
+/// replaceable. Accordingly this function **never purges** — there is no option
+/// for it — and every path is re-validated with [`PathGuard::check_user_file`]
+/// immediately before it is touched. A dry run returns before any trash call.
+pub fn trash_files(
+    files: &[LargeFile],
+    guard: &PathGuard,
+    dry_run: bool,
+    trigger: Trigger,
+) -> RunRecord {
+    let mut record = RunRecord::new(trigger, dry_run);
+    record.candidates_found = files.len();
+    record.bytes_found = files.iter().map(|f| f.on_disk).sum();
+    // Serial on purpose: the user confirmed each file individually and the
+    // Trash APIs are not designed for concurrent callers.
+    record.items = files
+        .iter()
+        .map(|file| trash_one_file(file, guard, dry_run))
+        .collect();
+    record.finished_at = std::time::SystemTime::now();
+    record
+}
+
+fn trash_one_file(file: &LargeFile, guard: &PathGuard, dry_run: bool) -> ItemOutcome {
+    let base = ItemOutcome {
+        id: CandidateId::new(LARGE_FILE_PROVIDER, &file.path),
+        provider: LARGE_FILE_PROVIDER.to_string(),
+        group: Group::Files,
+        label: file
+            .path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| file.path.display().to_string()),
+        tier: Tier::Caution,
+        paths: vec![file.path.clone()],
+        expected_bytes: file.on_disk,
+        freed_bytes: 0,
+        disposition: Disposition::Skipped,
+        error: None,
+    };
+    // Another hardlink keeps the data alive, so even emptying the Trash gives
+    // nothing back. Claiming those bytes would be a lie.
+    let credit = if file.hardlinked { 0 } else { file.on_disk };
+    trash_user_file(base, &file.path, credit, guard, dry_run)
+}
+
+/// The one route by which a user's own file is removed: re-checked with
+/// [`PathGuard::check_user_file`] right now, then moved to the Trash. There is
+/// deliberately no purge branch here.
+fn trash_user_file(
+    outcome: ItemOutcome,
+    path: &std::path::Path,
+    credit: u64,
+    guard: &PathGuard,
+    dry_run: bool,
+) -> ItemOutcome {
+    trash_checked(outcome, path, credit, dry_run, |p| guard.check_user_file(p))
+}
+
+/// Re-validate one path with `check` right now, then move it to the Trash.
+/// Shared by user files and applications; neither ever has a purge branch.
+fn trash_checked(
+    mut outcome: ItemOutcome,
+    path: &std::path::Path,
+    credit: u64,
+    dry_run: bool,
+    check: impl FnOnce(&std::path::Path) -> crate::Result<PathBuf>,
+) -> ItemOutcome {
+    if std::fs::symlink_metadata(path).is_err() {
+        outcome.disposition = Disposition::Skipped; // already gone
+        return outcome;
+    }
+
+    let canonical = match check(path) {
+        Ok(path) => path,
+        Err(e) => {
+            outcome.disposition = Disposition::Failed;
+            outcome.error = Some(e.to_string());
+            return outcome;
+        }
+    };
+
+    if dry_run {
+        outcome.disposition = Disposition::DryRun;
+        return outcome;
+    }
+
+    match trash::delete(&canonical) {
+        Ok(()) => {
+            outcome.disposition = Disposition::Trashed;
+            outcome.freed_bytes = credit;
+        }
+        Err(source) => {
+            outcome.disposition = Disposition::Failed;
+            outcome.error = Some(
+                Error::Trash {
+                    path: canonical,
+                    source,
+                }
+                .to_string(),
+            );
+        }
+    }
+    outcome
+}
+
+/// A `files.large` candidate from a normal scan: exactly one path, Trash only,
+/// whatever `--purge` or the configured delete mode say.
+fn trash_file_candidate(candidate: &Candidate, guard: &PathGuard, dry_run: bool) -> ItemOutcome {
+    let base = base_outcome(candidate);
+    match candidate.paths.as_slice() {
+        [path] => trash_user_file(base, path, candidate.reclaimable(), guard, dry_run),
+        _ => ItemOutcome {
+            disposition: Disposition::Failed,
+            error: Some("a user-file candidate must carry exactly one path".into()),
+            ..base
+        },
+    }
+}
+
+/// An `apps.unused` candidate: one `.app` bundle, Trash only, refused while the
+/// app is running (moving a running app leaves it half-alive and confused).
+fn trash_app_candidate(candidate: &Candidate, guard: &PathGuard, dry_run: bool) -> ItemOutcome {
+    let base = base_outcome(candidate);
+    let [path] = candidate.paths.as_slice() else {
+        return ItemOutcome {
+            disposition: Disposition::Failed,
+            error: Some("an application candidate must carry exactly one path".into()),
+            ..base
+        };
+    };
+    trash_checked(base, path, candidate.reclaimable(), dry_run, |p| {
+        let canonical = guard.check_app(p)?;
+        if crate::apps::is_running(&canonical) {
+            return Err(Error::refused(
+                &canonical,
+                "the app is running; quit it first",
+            ));
+        }
+        Ok(canonical)
+    })
+}
+
 /// Remove one candidate's paths.
 fn remove_paths(candidate: &Candidate, guard: &PathGuard, opts: &CleanOptions) -> ItemOutcome {
+    match candidate.action {
+        Action::TrashFile => return trash_file_candidate(candidate, guard, opts.dry_run),
+        Action::TrashApp => return trash_app_candidate(candidate, guard, opts.dry_run),
+        _ => {}
+    }
     let mut outcome = base_outcome(candidate);
 
     // Re-validate now, not at scan time. A symlink can be swapped into place while
@@ -332,6 +487,7 @@ mod tests {
                     artifact_atime: None,
                     source_mtime: None,
                     vcs_activity: None,
+                    opened: None,
                     last_used_days: 400,
                     active_now: false,
                 },
@@ -547,6 +703,7 @@ mod tests {
                     artifact_atime: None,
                     source_mtime: None,
                     vcs_activity: None,
+                    opened: None,
                     last_used_days: 100,
                     active_now: false,
                 },
@@ -564,6 +721,139 @@ mod tests {
         let items = vec![safe, caution];
         assert_eq!(needs_explicit_confirmation(&items, true).len(), 1);
         assert_eq!(needs_explicit_confirmation(&items, false).len(), 0);
+    }
+
+    fn large(path: &Path, on_disk: u64) -> LargeFile {
+        LargeFile {
+            path: path.to_path_buf(),
+            on_disk,
+            logical: on_disk,
+            modified: None,
+            accessed: None,
+            kind: crate::large_files::FileKind::Other,
+            hardlinked: false,
+        }
+    }
+
+    // Real trashing is not exercised here: it would fill the developer's actual
+    // Trash. The guard and dry-run paths are what decide whether it is reached.
+
+    #[test]
+    fn trashing_files_in_a_dry_run_touches_nothing() {
+        let f = fixture();
+        let dir = make_tree(&f.home, "Downloads", 2048);
+        let file = dir.join("data.bin");
+
+        let record = trash_files(&[large(&file, 2048)], &f.guard, true, Trigger::Cli);
+
+        assert!(file.exists());
+        assert_eq!(record.items[0].disposition, Disposition::DryRun);
+        assert_eq!(record.items[0].group, Group::Files);
+        assert_eq!(record.items[0].tier, Tier::Caution);
+        assert_eq!(record.bytes_found, 2048);
+    }
+
+    #[test]
+    fn trashing_a_protected_file_is_refused() {
+        let f = fixture();
+        let key = make_tree(&f.home, ".ssh", 512).join("data.bin");
+        let record = trash_files(&[large(&key, 512)], &f.guard, false, Trigger::Cli);
+        assert!(key.exists());
+        assert_eq!(record.items[0].disposition, Disposition::Failed);
+        assert!(!record.succeeded());
+    }
+
+    #[test]
+    fn trashing_a_directory_is_refused() {
+        let f = fixture();
+        let dir = make_tree(&f.home, "Downloads/folder", 512);
+        let record = trash_files(&[large(&dir, 512)], &f.guard, false, Trigger::Cli);
+        assert!(dir.exists());
+        assert_eq!(record.items[0].disposition, Disposition::Failed);
+    }
+
+    #[test]
+    fn a_large_file_candidate_goes_through_the_user_file_check_even_under_purge() {
+        // The cache check refuses ~/Downloads outright, so a DryRun (rather than
+        // Failed) proves the candidate was routed through check_user_file.
+        let f = fixture();
+        let file = make_tree(&f.home, "Downloads", 2048).join("data.bin");
+        let candidate = crate::large_files::to_candidate(&large(&file, 2048));
+        let opts = CleanOptions {
+            dry_run: true,
+            ..purge_opts()
+        };
+
+        let record = clean(&[candidate], &f.guard, &opts, None);
+        assert_eq!(record.items[0].disposition, Disposition::DryRun);
+        assert!(file.exists());
+    }
+
+    #[test]
+    fn a_large_file_candidate_pointing_at_a_directory_is_refused() {
+        let f = fixture();
+        let dir = make_tree(&f.home, "Downloads/folder", 512);
+        let candidate = crate::large_files::to_candidate(&large(&dir, 512));
+        let record = clean(&[candidate], &f.guard, &purge_opts(), None);
+        assert_eq!(record.items[0].disposition, Disposition::Failed);
+        assert!(
+            dir.exists(),
+            "a directory must never be removed by this route"
+        );
+    }
+
+    fn app(path: &Path) -> Candidate {
+        crate::apps::to_candidate(&crate::apps::InstalledApp {
+            path: path.to_path_buf(),
+            name: "Old".into(),
+            last_opened: Some(SystemTime::UNIX_EPOCH),
+            installed: None,
+            system_owned: false,
+        })
+    }
+
+    #[test]
+    fn an_app_candidate_goes_through_the_app_check_even_under_purge() {
+        // ~/Applications is protected from the cache check, so DryRun (not
+        // Failed) proves the candidate was routed through check_app.
+        let f = fixture();
+        let bundle = make_tree(&f.home, "Applications/Old.app/Contents", 512);
+        let bundle = bundle.parent().unwrap().to_path_buf();
+        let opts = CleanOptions {
+            dry_run: true,
+            ..purge_opts()
+        };
+
+        let record = clean(&[app(&bundle)], &f.guard, &opts, None);
+        assert_eq!(record.items[0].disposition, Disposition::DryRun);
+        assert!(bundle.exists());
+    }
+
+    #[test]
+    fn an_app_candidate_outside_the_applications_folders_is_refused() {
+        let f = fixture();
+        let stray = make_tree(&f.home, "Downloads/Old.app", 512);
+
+        let record = clean(&[app(&stray)], &f.guard, &purge_opts(), None);
+        assert_eq!(record.items[0].disposition, Disposition::Failed);
+        assert!(stray.exists(), "a refused bundle must be left alone");
+    }
+
+    #[test]
+    fn an_already_removed_app_is_skipped() {
+        let f = fixture();
+        let gone = f.home.join("Applications/Gone.app");
+        let record = clean(&[app(&gone)], &f.guard, &purge_opts(), None);
+        assert_eq!(record.items[0].disposition, Disposition::Skipped);
+    }
+
+    #[test]
+    fn trashing_an_already_missing_file_is_skipped() {
+        let f = fixture();
+        let gone = f.home.join("Downloads/gone.iso");
+        let record = trash_files(&[large(&gone, 512)], &f.guard, false, Trigger::Cli);
+        assert_eq!(record.items[0].disposition, Disposition::Skipped);
+        assert!(record.succeeded());
     }
 
     #[test]

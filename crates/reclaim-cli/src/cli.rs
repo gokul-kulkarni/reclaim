@@ -20,6 +20,9 @@ use reclaim_core::model::{Group, Tier};
         reclaim scan --json                  machine-readable output\n  \
         reclaim clean --tier safe --yes      remove regenerable caches without prompting\n  \
         reclaim clean --older-than 90d       only things untouched for 90 days\n  \
+        reclaim large                        biggest files in your home folder\n  \
+        reclaim large ~/Downloads --trash    pick large files to move to the Trash\n  \
+        reclaim apps                         installed apps by when you last opened them\n  \
         reclaim ui                           rich web UI on localhost\n  \
         reclaim history report --open        detailed HTML report of every run\n  \
         reclaim schedule install             run weekly in the background"
@@ -62,6 +65,21 @@ pub enum Command {
 
     /// Scan, then remove what matches the filters.
     Clean(CleanArgs),
+
+    /// Find the largest individual files. Optionally move picked ones to the Trash.
+    ///
+    /// Unlike `scan`, which understands caches and build artifacts, this lists
+    /// plain files by size: videos, disk images, archives, model weights. They
+    /// are usually your own data, so nothing is removed without a per-file
+    /// confirmation, and removal always goes to the Trash.
+    Large(LargeArgs),
+
+    /// List installed apps with their size and when each was last opened.
+    ///
+    /// Read-only. Dates come from Spotlight, the same "Last opened" Finder shows.
+    /// Apps unopened for 90 days or more (configurable) also appear in `scan`
+    /// and the UIs as "Unused apps", where they can be moved to the Trash.
+    Apps(AppsArgs),
 
     /// Open the web UI on localhost.
     Ui(UiArgs),
@@ -167,6 +185,69 @@ pub struct CleanArgs {
     /// section's constraints and records the run as background activity.
     #[arg(long, hide = true)]
     pub scheduled: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct LargeArgs {
+    /// Directories (or files) to search. Defaults to your home directory.
+    #[arg(value_name = "PATH")]
+    pub paths: Vec<PathBuf>,
+
+    /// Only files at least this big on disk, e.g. 1GB.
+    #[arg(long, value_name = "SIZE", value_parser = parse_size, default_value = "500MB")]
+    pub min_size: u64,
+
+    /// Show at most this many files, largest first. 0 shows all.
+    #[arg(long, value_name = "N", default_value_t = reclaim_core::large_files::DEFAULT_LIMIT)]
+    pub limit: usize,
+
+    /// Only files not modified for at least this long, e.g. 90d, 6mo.
+    #[arg(long, value_name = "AGE", value_parser = parse_days)]
+    pub older_than: Option<u32>,
+
+    /// Also search dot-directories such as ~/.local. Known caches stay excluded;
+    /// `reclaim scan` covers those.
+    #[arg(long)]
+    pub include_hidden: bool,
+
+    /// Go through the list one file at a time and move the ones you approve to
+    /// the Trash. Requires an interactive terminal.
+    #[arg(long, conflicts_with = "json")]
+    pub trash: bool,
+
+    /// With --trash: ask about each file but only report what would happen.
+    #[arg(long, requires = "trash")]
+    pub dry_run: bool,
+
+    /// Emit JSON instead of a table.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct AppsArgs {
+    /// Only apps not opened for at least this long, e.g. 90d, 6mo.
+    #[arg(long, value_name = "AGE", value_parser = parse_days)]
+    pub unused: Option<u32>,
+
+    /// Order of the list.
+    #[arg(long, value_enum, default_value_t = AppSort::Used)]
+    pub sort: AppSort,
+
+    /// Emit JSON instead of a table.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// How `reclaim apps` orders its list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum AppSort {
+    /// Least recently opened first.
+    Used,
+    /// Largest first.
+    Size,
+    /// Alphabetical.
+    Name,
 }
 
 #[derive(Debug, Args)]
@@ -369,6 +450,65 @@ mod tests {
             assert!(script.contains("reclaim"), "empty completion for {shell}");
             assert!(script.contains("scan"), "subcommands missing for {shell}");
         }
+    }
+
+    #[test]
+    fn large_defaults_to_a_500mb_threshold_and_home() {
+        let cli = Cli::parse_from(["reclaim", "large"]);
+        let Some(Command::Large(args)) = cli.command else {
+            panic!("expected large")
+        };
+        assert!(args.paths.is_empty());
+        assert_eq!(args.min_size, 500 * 1024 * 1024);
+        assert!(!args.trash);
+    }
+
+    #[test]
+    fn large_accepts_paths_and_human_filters() {
+        let cli = Cli::parse_from([
+            "reclaim",
+            "large",
+            "/a",
+            "/b",
+            "--min-size",
+            "2GB",
+            "--older-than",
+            "6mo",
+        ]);
+        let Some(Command::Large(args)) = cli.command else {
+            panic!("expected large")
+        };
+        assert_eq!(args.paths.len(), 2);
+        assert_eq!(args.min_size, 2 * 1024 * 1024 * 1024);
+        assert!(args.older_than.unwrap() >= 180);
+    }
+
+    #[test]
+    fn apps_defaults_to_least_recently_used_first() {
+        let cli = Cli::parse_from(["reclaim", "apps"]);
+        let Some(Command::Apps(args)) = cli.command else {
+            panic!("expected apps")
+        };
+        assert_eq!(args.sort, AppSort::Used);
+        assert_eq!(args.unused, None);
+    }
+
+    #[test]
+    fn apps_accepts_a_human_age_and_a_sort_order() {
+        let cli = Cli::parse_from(["reclaim", "apps", "--unused", "6mo", "--sort", "size"]);
+        let Some(Command::Apps(args)) = cli.command else {
+            panic!("expected apps")
+        };
+        assert_eq!(args.sort, AppSort::Size);
+        assert!(args.unused.is_some_and(|d| d >= 180));
+        assert!(Cli::try_parse_from(["reclaim", "apps", "--sort", "colour"]).is_err());
+    }
+
+    #[test]
+    fn large_trash_cannot_be_combined_with_json_and_dry_run_needs_trash() {
+        assert!(Cli::try_parse_from(["reclaim", "large", "--trash", "--json"]).is_err());
+        assert!(Cli::try_parse_from(["reclaim", "large", "--dry-run"]).is_err());
+        assert!(Cli::try_parse_from(["reclaim", "large", "--trash", "--dry-run"]).is_ok());
     }
 
     #[test]

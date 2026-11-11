@@ -1,8 +1,10 @@
 //! `reclaim` — find and safely reclaim developer disk space.
 
 mod app;
+mod apps;
 mod cli;
 mod commands;
+mod large;
 mod render;
 mod report_html;
 mod schedule;
@@ -82,6 +84,8 @@ fn run(cli: &Cli) -> Result<u8> {
             );
             0
         }
+        Some(Command::Large(args)) => large::run(&app, args, &style)?,
+        Some(Command::Apps(args)) => apps::run(&app, args, &style)?,
         Some(Command::Schedule { action }) => schedule::dispatch(&app, action, &style)?,
         Some(Command::Ui(args)) => {
             reclaim_web::serve(

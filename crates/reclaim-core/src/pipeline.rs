@@ -11,8 +11,10 @@ use std::time::Instant;
 
 use rayon::prelude::*;
 
+use crate::apps;
 use crate::config::Config;
 use crate::discovery::{self, Discovery};
+use crate::large_files::{self, LargeFile};
 use crate::model::{Candidate, ProjectRoot};
 use crate::platform::Paths;
 use crate::staleness::{self, Filter};
@@ -132,13 +134,34 @@ pub fn scan(
 ) -> ScanResult {
     let started = Instant::now();
 
-    // Stage 1: one pruned walk over the configured project roots.
+    // Stage 1: one pruned walk over the configured project roots, and — on its
+    // own thread, since the two cover different trees — the large-file walk
+    // over the home directory.
     let roots = config.resolved_project_roots(paths);
-    let found: Discovery = if roots.is_empty() {
-        Discovery::default()
-    } else {
-        discovery::find_projects(&roots, &config.scan)
-    };
+    // Installed apps are read from Spotlight on a third thread: one `mdls` call,
+    // a fraction of a second, but no reason to make the walks wait for it.
+    let (found, large, apps): (Discovery, Vec<LargeFile>, Vec<Candidate>) =
+        std::thread::scope(|scope| {
+            let large = config
+                .providers
+                .is_enabled(large_files::PROVIDER_ID)
+                .then(|| scope.spawn(|| find_large_files(paths, config)));
+            let apps = config.providers.is_enabled(apps::PROVIDER_ID).then(|| {
+                scope.spawn(|| apps::discover(paths.app_dirs(), config, &apps::spotlight_usage))
+            });
+            let found = if roots.is_empty() {
+                Discovery::default()
+            } else {
+                discovery::find_projects(&roots, &config.scan)
+            };
+            let large = large
+                .map(|handle| handle.join().unwrap_or_default())
+                .unwrap_or_default();
+            let apps = apps
+                .map(|handle| handle.join().unwrap_or_default())
+                .unwrap_or_default();
+            (found, large, apps)
+        });
     emit(
         progress,
         ScanEvent::ProjectsFound {
@@ -159,6 +182,13 @@ pub fn scan(
     // Two providers can legitimately point at the same path (a `build/` directory
     // claimed by both the JVM and the CMake provider). Offer it once.
     let discovered = dedupe(discovered);
+
+    // Large files are offered last, and only when no other candidate already
+    // covers them: a model inside a ComfyUI `models/` directory belongs to that
+    // candidate, with its context, not to a bare file listing.
+    let large: Vec<Candidate> = large.iter().map(large_files::to_candidate).collect();
+    let large = large_files::exclude_covered(large, &discovered);
+    let discovered: Vec<Candidate> = discovered.into_iter().chain(large).chain(apps).collect();
 
     // Shell-action candidates (`brew cleanup`, `docker prune`, `simctl delete`)
     // act on machine-global state, not on paths under the scanned home. Running
@@ -187,6 +217,7 @@ pub fn scan(
         threads: if threads == 1 { 1 } else { 0 },
         same_device: !config.scan.cross_device,
         max_depth: 64,
+        ..WalkOptions::default()
     };
 
     let pool = rayon::ThreadPoolBuilder::new()
@@ -234,6 +265,18 @@ pub fn scan(
 
     emit(progress, ScanEvent::Complete(Box::new(result.clone())));
     result
+}
+
+/// The large-file pass of a scan. A config error here was already reported
+/// when the config was validated, so it simply contributes nothing.
+fn find_large_files(paths: &Paths, config: &Config) -> Vec<LargeFile> {
+    match large_files::scan_options(config) {
+        Ok(opts) => large_files::find_large_files(&[paths.home().to_path_buf()], &opts).files,
+        Err(e) => {
+            tracing::warn!("skipping the large-file scan: {e}");
+            Vec::new()
+        }
+    }
 }
 
 /// Collapse candidates that resolve to the same primary path, keeping the first.
@@ -618,6 +661,126 @@ mod tests {
             .iter()
             .any(|e| matches!(e, ScanEvent::Measured { .. })));
         assert!(matches!(events.last(), Some(ScanEvent::Complete(_))));
+    }
+
+    fn small_large_file_threshold() -> Config {
+        let mut config = Config::default();
+        config.providers.files.min_size = "100KB".into();
+        config
+    }
+
+    #[test]
+    fn large_files_under_home_are_offered_as_their_own_caution_group() {
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path().canonicalize().unwrap();
+        let movies = tree(&home, "Movies", 256 * 1024);
+
+        let result = scan(
+            &[],
+            &Paths::with_home(&home),
+            &small_large_file_threshold(),
+            &no_filter(),
+            None,
+        );
+
+        let file = result
+            .all
+            .iter()
+            .find(|c| c.provider == "files.large")
+            .expect("the big file must be offered");
+        assert_eq!(file.paths, vec![movies.join("blob.bin")]);
+        assert_eq!(file.group, Group::Files);
+        assert_eq!(file.tier, Tier::Caution);
+        assert!(file.label.starts_with("File · "), "{}", file.label);
+        assert!(file.reclaimable() >= 256 * 1024, "it must be measured");
+    }
+
+    #[test]
+    fn disabling_the_files_group_skips_the_large_file_walk() {
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path().canonicalize().unwrap();
+        tree(&home, "Movies", 256 * 1024);
+        let mut config = small_large_file_threshold();
+        config.providers.disabled.push("files".into());
+
+        let result = scan(&[], &Paths::with_home(&home), &config, &no_filter(), None);
+        assert!(result.all.is_empty(), "{:?}", result.all);
+    }
+
+    /// An app bundle in the sandbox's `~/Applications`, its folder dated `days`
+    /// ago. Spotlight does not index temporary directories, so that date is the
+    /// only usage evidence the scan will find.
+    #[cfg(target_os = "macos")]
+    fn installed_app(home: &std::path::Path, name: &str, days: u64) -> PathBuf {
+        let app = tree(home, &format!("Applications/{name}.app/Contents"), 1024);
+        let app = app.parent().unwrap().to_path_buf();
+        let then = std::time::SystemTime::now() - std::time::Duration::from_secs(days * 86_400);
+        fs::File::open(&app).unwrap().set_modified(then).unwrap();
+        app
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn unused_apps_are_offered_and_aged_by_use_not_by_their_files() {
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path().canonicalize().unwrap();
+        let old = installed_app(&home, "Old", 200);
+        installed_app(&home, "Recent", 5);
+
+        let result = scan(
+            &[],
+            &Paths::with_home(&home),
+            &Config::default(),
+            &no_filter(),
+            None,
+        );
+
+        let apps: Vec<&Candidate> = result
+            .all
+            .iter()
+            .filter(|c| c.group == Group::Apps)
+            .collect();
+        assert_eq!(apps.len(), 1, "{apps:?}");
+        assert_eq!(apps[0].paths, vec![old]);
+        assert_eq!(apps[0].tier, Tier::Caution);
+        // Its files were written seconds ago; the age must still be the app's.
+        assert_eq!(apps[0].last_used_days(), Some(200));
+        assert!(apps[0].reclaimable() >= 1024, "it must be measured");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn disabling_the_apps_group_skips_the_app_lookup() {
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path().canonicalize().unwrap();
+        installed_app(&home, "Old", 200);
+        let mut config = Config::default();
+        config.providers.disabled.push("apps".into());
+
+        let result = scan(&[], &Paths::with_home(&home), &config, &no_filter(), None);
+        assert!(result.all.iter().all(|c| c.group != Group::Apps));
+    }
+
+    #[test]
+    fn a_large_file_inside_another_candidate_is_offered_only_once() {
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path().canonicalize().unwrap();
+        let models = tree(&home, "ComfyUI/models", 256 * 1024);
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(Fake {
+            id: "fake.models",
+            paths: vec![models],
+            kind: Kind::GlobalCache,
+        })];
+
+        let result = scan(
+            &providers,
+            &Paths::with_home(&home),
+            &small_large_file_threshold(),
+            &no_filter(),
+            None,
+        );
+        assert_eq!(result.all.len(), 1);
+        assert_eq!(result.all[0].provider, "fake.models");
     }
 
     #[test]

@@ -91,6 +91,24 @@ include_volumes = false
 # probe entirely.
 check_running = true
 
+[providers.files]
+# Individual large files (videos, disk images, archives, ...) found anywhere
+# under your home folder, shown in every scan as their own "Large files" group.
+# They are your own data, so they are always caution tier and only ever moved
+# to the Trash. Disable with disabled = ["files"] above.
+min_size = "500MB"
+# At most this many, largest first. 0 means no limit.
+limit = 50
+# Also look inside dot-directories. Known caches are always skipped.
+include_hidden = false
+
+[providers.apps]
+# Installed apps (/Applications and ~/Applications, macOS only) that have not
+# been opened for this many days, shown in every scan as "Unused apps" with the
+# date Spotlight last saw each one opened. Always caution tier and only ever
+# moved to the Trash. Disable with disabled = ["apps"] above.
+unused_days = 90
+
 [ui]
 # 0 picks a free port.
 port = 0

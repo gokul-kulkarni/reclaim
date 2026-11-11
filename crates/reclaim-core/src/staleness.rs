@@ -47,6 +47,10 @@ pub fn derive_signals(
         artifact_atime: measurement.newest_atime,
         source_mtime,
         vcs_activity,
+        opened: match candidate.kind {
+            Kind::Application => candidate.last_opened,
+            _ => None,
+        },
         last_used_days: 0,
         active_now: false,
     };
@@ -244,6 +248,7 @@ mod tests {
             artifact_atime: None,
             source_mtime: None,
             vcs_activity: None,
+            opened: None,
             last_used_days: days,
             active_now: days == 0,
         };

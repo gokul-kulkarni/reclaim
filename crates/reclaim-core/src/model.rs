@@ -52,6 +52,10 @@ pub enum Group {
     Editors,
     System,
     Ml,
+    /// Individual large files found by `reclaim large`. Never offered by a provider.
+    Files,
+    /// Installed applications that have not been opened in a long time.
+    Apps,
 }
 
 impl Group {
@@ -72,6 +76,8 @@ impl Group {
         Group::Editors,
         Group::System,
         Group::Ml,
+        Group::Files,
+        Group::Apps,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -92,6 +98,8 @@ impl Group {
             Group::Editors => "editors",
             Group::System => "system",
             Group::Ml => "ml",
+            Group::Files => "files",
+            Group::Apps => "apps",
         }
     }
 
@@ -114,6 +122,8 @@ impl Group {
             Group::Editors => "Editors & IDEs",
             Group::System => "System",
             Group::Ml => "ML / models",
+            Group::Files => "Large files",
+            Group::Apps => "Unused apps",
         }
     }
 }
@@ -204,6 +214,12 @@ pub enum Kind {
     Runtime,
     /// Reclaimed by shelling out to a tool rather than deleting paths.
     Command,
+    /// One of the user's own files, found by size alone. Nothing is known about
+    /// whether a copy exists elsewhere.
+    UserFile,
+    /// An installed application bundle. Staleness comes from when it was last
+    /// opened, not from when its files last changed (an update rewrites them).
+    Application,
 }
 
 /// How the space comes back if the user later needs it.
@@ -300,6 +316,12 @@ pub enum Action {
     RemovePaths,
     /// Run an external command that does the reclaiming itself.
     Shell { program: String, args: Vec<String> },
+    /// Move a single user file to the Trash, whatever the delete mode says.
+    /// Validated with `PathGuard::check_user_file`, never purged.
+    TrashFile,
+    /// Move one application bundle to the Trash, whatever the delete mode says.
+    /// Validated with `PathGuard::check_app`, refused while the app is running.
+    TrashApp,
 }
 
 impl Action {
@@ -374,6 +396,10 @@ pub struct Signals {
     pub source_mtime: Option<SystemTime>,
     /// Last observed git activity in the owning project.
     pub vcs_activity: Option<SystemTime>,
+    /// When an application was last opened, as recorded by the OS. When known it
+    /// is the whole answer: an auto-update touching every file is not use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opened: Option<SystemTime>,
     /// Days since the most recent of all the above signals.
     pub last_used_days: u32,
     /// Touched within the last 24h: a build or dev server may be using it right now.
@@ -387,6 +413,9 @@ impl Signals {
     /// the artifact's own mtime: a `target/` directory untouched for six months still
     /// belongs to a repository you committed to yesterday, and is not stale.
     pub fn last_used(&self) -> SystemTime {
+        if let Some(opened) = self.opened {
+            return opened;
+        }
         [
             Some(self.artifact_mtime),
             self.artifact_atime,
@@ -418,6 +447,10 @@ pub struct Candidate {
     pub warnings: Vec<Warning>,
     /// The project this artifact belongs to, for `Kind::ProjectArtifact`.
     pub project: Option<PathBuf>,
+    /// When the OS last saw this opened, for `Kind::Application`. Known at
+    /// discovery, unlike every other freshness signal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_opened: Option<SystemTime>,
     /// Filled by the measure stage.
     pub size: Option<Size>,
     /// Filled by the measure stage.
@@ -476,6 +509,7 @@ pub struct CandidateBuilder {
     regen: Regen,
     warnings: Vec<Warning>,
     project: Option<PathBuf>,
+    last_opened: Option<SystemTime>,
 }
 
 impl CandidateBuilder {
@@ -494,6 +528,7 @@ impl CandidateBuilder {
             },
             warnings: Vec::new(),
             project: None,
+            last_opened: None,
         }
     }
 
@@ -550,6 +585,11 @@ impl CandidateBuilder {
         self
     }
 
+    pub fn last_opened(mut self, when: Option<SystemTime>) -> Self {
+        self.last_opened = when;
+        self
+    }
+
     pub fn build(self) -> Candidate {
         let primary = self
             .paths
@@ -569,6 +609,7 @@ impl CandidateBuilder {
             regen: self.regen,
             warnings: self.warnings,
             project: self.project,
+            last_opened: self.last_opened,
             size: None,
             signals: None,
             score: None,
@@ -679,6 +720,7 @@ mod tests {
             artifact_atime: None,
             source_mtime: Some(recent),
             vcs_activity: None,
+            opened: None,
             last_used_days: 0,
             active_now: false,
         };

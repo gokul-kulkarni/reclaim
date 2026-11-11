@@ -61,7 +61,7 @@ pub const PROJECT_MARKERS: &[&str] = &[
 ///
 /// These are artifact and dependency trees. They hold the overwhelming majority
 /// of files on a developer machine, and nothing inside them is ever a project root.
-const NEVER_DESCEND: &[&str] = &[
+pub(crate) const NEVER_DESCEND: &[&str] = &[
     "node_modules",
     "target",
     "build",
@@ -219,14 +219,14 @@ fn markers_in(dir: &Path) -> Vec<String> {
     found
 }
 
-fn compile_excludes(patterns: &[String]) -> Vec<glob::Pattern> {
+pub(crate) fn compile_excludes(patterns: &[String]) -> Vec<glob::Pattern> {
     patterns
         .iter()
         .filter_map(|p| glob::Pattern::new(p).ok())
         .collect()
 }
 
-fn is_excluded(path: &Path, excludes: &[glob::Pattern]) -> bool {
+pub(crate) fn is_excluded(path: &Path, excludes: &[glob::Pattern]) -> bool {
     excludes.iter().any(|p| p.matches_path(path))
 }
 

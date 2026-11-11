@@ -3,6 +3,63 @@
 All notable changes to `reclaim`. Versions follow [semver](https://semver.org);
 while the project is pre-1.0, breaking changes may land in a minor bump.
 
+## Unreleased
+
+### Added
+
+- **`reclaim large`: find large individual files.** Lists every regular file at
+  or above `--min-size` (default 500 MB) under your home directory or the paths
+  given, largest first, with its kind, age, and a note when it is hardlinked or
+  sparse. `--older-than`, `--limit`, `--include-hidden` and `--json` are
+  supported. Directories the provider pipeline already covers are skipped.
+- **`reclaim large --trash`** goes through the list one file at a time and moves
+  only the files you approve to the Trash. It never purges, refuses to run
+  without a terminal, re-validates every file immediately before moving it, and
+  records the run in the history journal under a new `files` group.
+
+- **Large files in every scan.** The terminal UI, `reclaim scan` and the web
+  UI now show a "Large files" group (`files.large`): individual files of
+  500 MB or more under the home directory, labelled with their type
+  (`Video · talk.mov`). Always caution tier and Trash-only, even under
+  `--purge`. Configured under `[providers.files]`; disable with
+  `disabled = ["files"]`.
+
+- **Unused apps in every scan (macOS).** A new "Unused apps" group
+  (`apps.unused`) offers apps in `/Applications` and `~/Applications` that have
+  not been opened for `providers.apps.unused_days` (default 90). It shows each
+  app's size and when it was last opened: the later of Spotlight's
+  `kMDItemLastUsedDate` and the last launch of the app's program file. An app
+  that was never opened is aged from its install date and labelled "never
+  opened". Apps are always caution tier, only ever moved to the Trash, and
+  refused while running. Web-app shortcuts that Chrome-family browsers create
+  (`~/Applications/Chrome Apps`) are not listed. Disable with
+  `disabled = ["apps"]`.
+- **`reclaim apps`** lists every installed app with its size and when it was
+  last opened, least recently used first. `--unused AGE`,
+  `--sort used|size|name` and `--json` are supported. It is read-only.
+
+### Fixed
+
+- Sizes no longer come out too small, or at 0 B, when many large items are
+  measured at once. When the shared thread pool was too busy to start a
+  directory walk within 5 seconds, the walk was abandoned and reported a
+  partial size. It is now measured serially instead.
+
+### Changed
+
+- Large-file search treats macOS packages (`.app`, `.photoslibrary`,
+  `.imovielibrary`, `.sparsebundle`, …) as opaque, so a file inside a Photos
+  library is never offered on its own.
+- The safety guard gained a narrower check for single, user-approved files
+  (`PathGuard::check_user_file`). It permits regular files inside personal
+  folders such as `~/Downloads` and `~/Movies` — which the cache-cleaning path
+  still refuses outright — while continuing to refuse directories, symlinks,
+  credential stores, `.git` contents and configured protected paths.
+- The safety guard gained `PathGuard::check_app` for application bundles. It
+  only accepts a real `.app` directory directly inside an Applications folder,
+  or one folder below. It refuses symlinks (so nothing on the sealed system
+  volume), helpers nested inside other bundles, and configured protected paths.
+
 ## 0.1.5 — 2026-08-25
 
 ### Added

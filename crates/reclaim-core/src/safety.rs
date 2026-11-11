@@ -42,8 +42,9 @@ const ALWAYS_PROTECTED: &[&str] = &[
     "/Volumes",
 ];
 
-/// Names that are never deletable relative to the home directory.
-const PROTECTED_HOME_ENTRIES: &[&str] = &[
+/// Credential and configuration stores in the home directory. Refused by every
+/// check, including [`PathGuard::check_user_file`].
+const SECRET_HOME_ENTRIES: &[&str] = &[
     ".ssh",
     ".gnupg",
     ".aws",
@@ -51,6 +52,12 @@ const PROTECTED_HOME_ENTRIES: &[&str] = &[
     ".docker",
     ".config",
     ".password-store",
+];
+
+/// The user's own data folders. No cache ever lives here, so the cache-cleaning
+/// path refuses them outright. A single file the user explicitly picked from a
+/// large-file listing is the one exception — see [`PathGuard::check_user_file`].
+const USER_DATA_HOME_ENTRIES: &[&str] = &[
     "Documents",
     "Desktop",
     "Downloads",
@@ -75,6 +82,11 @@ pub struct PathGuard {
     allowed_roots: Vec<PathBuf>,
     /// User-configured additions to the protected set.
     protected: BTreeSet<PathBuf>,
+    /// The subset of `protected` that holds user data rather than credentials.
+    user_data_dirs: BTreeSet<PathBuf>,
+    /// Folders installed applications live in. The only place
+    /// [`PathGuard::check_app`] accepts a bundle from.
+    app_dirs: Vec<PathBuf>,
     /// Minimum number of path components below the home directory.
     /// Depth 1 (`~/foo`) is allowed for well-known dotted caches like `~/.npm`;
     /// see [`PathGuard::check`] for why bare non-dotted entries still need depth 2.
@@ -108,17 +120,164 @@ impl PathGuard {
             allowed_roots.push(tmp.to_path_buf());
         }
 
-        let protected = PROTECTED_HOME_ENTRIES
+        let protected = SECRET_HOME_ENTRIES
+            .iter()
+            .chain(USER_DATA_HOME_ENTRIES)
+            .map(|e| home.join(e))
+            .collect();
+        let user_data_dirs = USER_DATA_HOME_ENTRIES
             .iter()
             .map(|e| home.join(e))
             .collect();
+
+        let app_dirs = paths.app_dirs().to_vec();
 
         Self {
             home,
             allowed_roots,
             protected,
+            user_data_dirs,
+            app_dirs,
             min_depth_below_home: 1,
         }
+    }
+
+    /// Check one regular file the user explicitly chose, e.g. from `reclaim large`.
+    ///
+    /// Deliberately narrower in what it accepts and broader in where: the target
+    /// must be a single regular file (never a directory, never a symlink), but it
+    /// may live inside the user's own data folders (`~/Downloads`, `~/Movies`, …),
+    /// because that is where large files actually are. Everything else still
+    /// applies: credential stores, user-configured protected paths, `.git` and
+    /// friends, and the allowed-root rule. Callers must only ever move what passes
+    /// this check to the Trash, never purge it.
+    pub fn check_user_file(&self, path: &Path) -> Result<PathBuf> {
+        if !path.is_absolute() {
+            return Err(Error::refused(path, "path is not absolute"));
+        }
+        let meta = std::fs::symlink_metadata(path)
+            .map_err(|e| Error::refused(path, format!("cannot stat: {e}")))?;
+        if meta.file_type().is_symlink() {
+            return Err(Error::refused(path, "path is a symlink"));
+        }
+        if !meta.is_file() {
+            return Err(Error::refused(path, "not a regular file"));
+        }
+        let canonical = path
+            .canonicalize()
+            .map_err(|e| Error::refused(path, format!("cannot canonicalize: {e}")))?;
+        self.check_user_file_canonical(&canonical)?;
+        Ok(canonical)
+    }
+
+    /// The path-shape rules for [`PathGuard::check_user_file`], testable without disk.
+    pub fn check_user_file_canonical(&self, canonical: &Path) -> Result<()> {
+        if canonical
+            .parent()
+            .is_none_or(|p| p.components().count() <= 1)
+        {
+            return Err(Error::refused(
+                canonical,
+                "file sits at the filesystem root",
+            ));
+        }
+
+        for protected in &self.protected {
+            if self.user_data_dirs.contains(protected) {
+                continue;
+            }
+            if canonical.starts_with(protected) {
+                return Err(Error::refused(
+                    canonical,
+                    format!("inside protected path {}", protected.display()),
+                ));
+            }
+        }
+
+        check_forbidden_components(canonical)?;
+
+        if !self
+            .allowed_roots
+            .iter()
+            .any(|root| canonical.starts_with(root))
+        {
+            return Err(Error::refused(
+                canonical,
+                "outside every allowed root (home, cargo/go/android dirs, TMPDIR)",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Check one application bundle the user chose to remove.
+    ///
+    /// Applications live outside every allowed root (`/Applications`) or inside a
+    /// protected one (`~/Applications`), so the general [`PathGuard::check`]
+    /// rightly refuses them. This check is narrower instead: the target must be a
+    /// real `.app` directory (never a symlink, so nothing on the sealed system
+    /// volume) sitting directly in one of the application folders, or one folder
+    /// below. Credential stores, user-configured protected paths and `.git` are
+    /// still refused. Callers must only ever move what passes to the Trash.
+    pub fn check_app(&self, path: &Path) -> Result<PathBuf> {
+        if !path.is_absolute() {
+            return Err(Error::refused(path, "path is not absolute"));
+        }
+        let meta = std::fs::symlink_metadata(path)
+            .map_err(|e| Error::refused(path, format!("cannot stat: {e}")))?;
+        if meta.file_type().is_symlink() {
+            return Err(Error::refused(path, "path is a symlink"));
+        }
+        if !meta.is_dir() {
+            return Err(Error::refused(path, "not an application bundle"));
+        }
+        let canonical = path
+            .canonicalize()
+            .map_err(|e| Error::refused(path, format!("cannot canonicalize: {e}")))?;
+        self.check_app_canonical(&canonical)?;
+        Ok(canonical)
+    }
+
+    /// The path-shape rules for [`PathGuard::check_app`], testable without disk.
+    pub fn check_app_canonical(&self, canonical: &Path) -> Result<()> {
+        let is_app = canonical
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("app"));
+        if !is_app {
+            return Err(Error::refused(canonical, "not an `.app` bundle"));
+        }
+
+        let parent = canonical.parent();
+        let grandparent = parent.and_then(Path::parent);
+        // Resolved at check time: `~/Applications` may not exist when the guard
+        // is built, and `/Applications` is canonical already.
+        let in_app_folder = self.app_dirs.iter().any(|dir| {
+            let dir = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+            parent == Some(dir.as_path())
+                || (grandparent == Some(dir.as_path())
+                    && parent.is_some_and(|p| {
+                        !p.extension().is_some_and(|e| e.eq_ignore_ascii_case("app"))
+                    }))
+        });
+        if !in_app_folder {
+            return Err(Error::refused(
+                canonical,
+                "not directly inside an Applications folder",
+            ));
+        }
+
+        for protected in &self.protected {
+            if self.user_data_dirs.contains(protected) {
+                continue;
+            }
+            if canonical.starts_with(protected) {
+                return Err(Error::refused(
+                    canonical,
+                    format!("inside protected path {}", protected.display()),
+                ));
+            }
+        }
+
+        check_forbidden_components(canonical)
     }
 
     /// Add user-configured protected paths. Additive only.
@@ -191,17 +350,7 @@ impl PathGuard {
             }
         }
 
-        for component in canonical.components() {
-            if let Component::Normal(name) = component {
-                let name = name.to_string_lossy();
-                if FORBIDDEN_COMPONENTS.iter().any(|f| *f == name) {
-                    return Err(Error::refused(
-                        canonical,
-                        format!("path contains a `{name}` component"),
-                    ));
-                }
-            }
-        }
+        check_forbidden_components(canonical)?;
 
         let under_allowed_root = self
             .allowed_roots
@@ -259,6 +408,22 @@ impl PathGuard {
     pub fn home(&self) -> &Path {
         &self.home
     }
+}
+
+/// Refuse any path with a `.git` (or similar) component at any depth.
+fn check_forbidden_components(canonical: &Path) -> Result<()> {
+    for component in canonical.components() {
+        if let Component::Normal(name) = component {
+            let name = name.to_string_lossy();
+            if FORBIDDEN_COMPONENTS.iter().any(|f| *f == name) {
+                return Err(Error::refused(
+                    canonical,
+                    format!("path contains a `{name}` component"),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -434,6 +599,137 @@ mod tests {
         let (ok, errs) = g.check_all(&[good.clone(), bad, missing]);
         assert_eq!(ok, vec![good]);
         assert_eq!(errs.len(), 1, "missing paths are not errors, refusals are");
+    }
+
+    fn file(base: &Path, rel: &str) -> PathBuf {
+        let p = base.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(&p, b"data").unwrap();
+        p
+    }
+
+    #[test]
+    fn user_files_inside_data_folders_are_allowed_but_only_by_the_file_check() {
+        let (tmp, g) = guard();
+        let home = tmp.path().canonicalize().unwrap();
+        let movie = file(&home, "Movies/old-recording.mov");
+        let top = file(&home, "big.iso");
+
+        assert!(g.check_user_file(&movie).is_ok());
+        assert!(
+            g.check_user_file(&top).is_ok(),
+            "a file directly in ~ is fine"
+        );
+        assert!(
+            g.check(&movie).is_err(),
+            "the cache-cleaning check must still refuse user data folders"
+        );
+    }
+
+    #[test]
+    fn the_user_file_check_refuses_directories() {
+        let (tmp, g) = guard();
+        let home = tmp.path().canonicalize().unwrap();
+        let dir = mkdir(&home, "Downloads/folder");
+        let err = g.check_user_file(&dir).unwrap_err().to_string();
+        assert!(err.contains("not a regular file"), "{err}");
+    }
+
+    #[test]
+    fn the_user_file_check_still_refuses_credentials_git_and_configured_paths() {
+        let (tmp, g) = guard();
+        let home = tmp.path().canonicalize().unwrap();
+        let key = file(&home, ".ssh/id_ed25519");
+        let pack = file(&home, "dev/app/.git/objects/pack/big.pack");
+        let precious = file(&home, "Videos/wedding.mp4");
+        let g = g.protect([home.join("Videos")]);
+
+        assert!(g.check_user_file(&key).is_err());
+        assert!(g.check_user_file(&pack).is_err());
+        assert!(
+            g.check_user_file(&precious).is_err(),
+            "config protection applies"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_user_file_check_refuses_symlinks() {
+        let (tmp, g) = guard();
+        let home = tmp.path().canonicalize().unwrap();
+        let real = file(&home, "Downloads/real.zip");
+        let link = home.join("Downloads/link.zip");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let err = g.check_user_file(&link).unwrap_err().to_string();
+        assert!(err.contains("symlink"), "{err}");
+    }
+
+    #[test]
+    fn the_user_file_check_refuses_files_outside_allowed_roots() {
+        let (_tmp, g) = guard();
+        assert!(g
+            .check_user_file_canonical(Path::new("/usr/lib/libbig.dylib"))
+            .is_err());
+        assert!(g.check_user_file_canonical(Path::new("/big.iso")).is_err());
+    }
+
+    /// A guard whose only application folder is `<home>/Applications`.
+    fn app_guard() -> (TempDir, PathGuard, PathBuf) {
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path().canonicalize().unwrap();
+        let apps = home.join("Applications");
+        fs::create_dir_all(&apps).unwrap();
+        let paths = Paths::with_home(&home).with_app_dirs(vec![apps.clone()]);
+        (tmp, PathGuard::new(&paths), apps)
+    }
+
+    #[test]
+    fn app_bundles_in_an_applications_folder_pass_the_app_check() {
+        let (_tmp, guard, apps) = app_guard();
+        let top = mkdir(&apps, "Editor.app");
+        let nested = mkdir(&apps, "Suite/Tool.app");
+
+        assert_eq!(guard.check_app(&top).unwrap(), top);
+        assert_eq!(guard.check_app(&nested).unwrap(), nested);
+        assert!(
+            guard.check(&top).is_err(),
+            "the general check still refuses ~/Applications"
+        );
+    }
+
+    #[test]
+    fn the_app_check_refuses_anything_that_is_not_a_bundle_in_place() {
+        let (_tmp, guard, apps) = app_guard();
+        let deep = mkdir(&apps, "Suite/Deeper/Tool.app");
+        let helper = mkdir(&apps, "Big.app/Contents/Helpers/Helper.app");
+        let not_app = mkdir(&apps, "Suite");
+        let elsewhere = mkdir(guard.home(), "Downloads/Copy.app");
+        let file = apps.join("Fake.app.txt");
+        fs::write(&file, b"x").unwrap();
+
+        for path in [&deep, &helper, &not_app, &elsewhere, &file] {
+            assert!(guard.check_app(path).is_err(), "{}", path.display());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_app_check_refuses_symlinked_bundles() {
+        let (_tmp, guard, apps) = app_guard();
+        let real = mkdir(guard.home(), ".hidden/Real.app");
+        let link = apps.join("Linked.app");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let err = guard.check_app(&link).unwrap_err().to_string();
+        assert!(err.contains("symlink"), "{err}");
+    }
+
+    #[test]
+    fn the_app_check_honours_configured_protected_paths() {
+        let (_tmp, guard, apps) = app_guard();
+        let kept = mkdir(&apps, "Keep.app");
+        let guard = guard.protect([kept.clone()]);
+        assert!(guard.check_app(&kept).is_err());
     }
 
     #[test]

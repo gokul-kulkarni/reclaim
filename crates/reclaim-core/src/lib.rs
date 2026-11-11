@@ -13,12 +13,14 @@
 //! [`safety::PathGuard`], and that check runs again immediately before the
 //! destructive call rather than only at scan time.
 
+pub mod apps;
 pub mod config;
 pub mod discovery;
 pub mod error;
 pub mod exec;
 pub mod format;
 pub mod journal;
+pub mod large_files;
 pub mod model;
 pub mod pipeline;
 pub mod platform;
@@ -29,7 +31,7 @@ pub mod walk;
 
 pub use config::{Config, DeleteMode};
 pub use error::{Error, Result};
-pub use exec::{clean, CleanEvent, CleanOptions};
+pub use exec::{clean, trash_files, CleanEvent, CleanOptions};
 pub use journal::{Disposition, ItemOutcome, Journal, RunRecord, Trigger};
 pub use model::{
     Action, Candidate, CandidateBuilder, CandidateId, Group, Kind, ProjectRoot, Regen, Severity,

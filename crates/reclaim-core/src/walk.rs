@@ -64,6 +64,9 @@ pub struct WalkOptions {
     pub same_device: bool,
     /// Give up below this many directory levels. Guards against pathological trees.
     pub max_depth: usize,
+    /// With `threads: 0`, how long to wait for a free pool worker before
+    /// walking serially instead.
+    pub busy_timeout: std::time::Duration,
 }
 
 impl Default for WalkOptions {
@@ -72,6 +75,7 @@ impl Default for WalkOptions {
             threads: 0,
             same_device: true,
             max_depth: 64,
+            busy_timeout: std::time::Duration::from_secs(5),
         }
     }
 }
@@ -102,14 +106,6 @@ pub fn measure(path: &Path, links: &LinkTracker, opts: &WalkOptions) -> Measurem
     }
 
     let root_device = device_of(&meta);
-    let logical = Arc::new(AtomicU64::new(0));
-    let on_disk = Arc::new(AtomicU64::new(0));
-    let shared = Arc::new(AtomicU64::new(0));
-    let files = Arc::new(AtomicU64::new(0));
-    let dirs = Arc::new(AtomicU64::new(1)); // the root itself
-    let newest_mtime = Arc::new(AtomicU64::new(0));
-    let newest_atime = Arc::new(AtomicU64::new(0));
-    let partial = Arc::new(AtomicBool::new(false));
 
     // jwalk's Rayon-backed modes have to acquire worker threads to make progress.
     // When the caller is already inside a single-threaded Rayon pool — the
@@ -120,11 +116,38 @@ pub fn measure(path: &Path, links: &LinkTracker, opts: &WalkOptions) -> Measurem
     // there, since a single-threaded caller has no other thread to overlap with.
     let parallelism = match opts.threads {
         0 => jwalk::Parallelism::RayonDefaultPool {
-            busy_timeout: std::time::Duration::from_secs(5),
+            busy_timeout: opts.busy_timeout,
         },
         1 => jwalk::Parallelism::Serial,
         n => jwalk::Parallelism::RayonNewPool(n),
     };
+
+    // The shared pool can also simply be saturated: many big trees (app bundles,
+    // `node_modules`) walking at once keep every worker busy past the timeout.
+    // jwalk then gives up before reading anything, so measure serially instead
+    // of reporting a near-zero size. Nothing was counted, so nothing is doubled.
+    walk_tree(path, root_device, links, opts, parallelism).unwrap_or_else(|| {
+        walk_tree(path, root_device, links, opts, jwalk::Parallelism::Serial).unwrap_or_default()
+    })
+}
+
+/// One walk of a directory tree. `None` means the thread pool was too busy to
+/// start it; any other problem is recorded as a partial measurement.
+fn walk_tree(
+    path: &Path,
+    root_device: u64,
+    links: &LinkTracker,
+    opts: &WalkOptions,
+    parallelism: jwalk::Parallelism,
+) -> Option<Measurement> {
+    let logical = Arc::new(AtomicU64::new(0));
+    let on_disk = Arc::new(AtomicU64::new(0));
+    let shared = Arc::new(AtomicU64::new(0));
+    let files = Arc::new(AtomicU64::new(0));
+    let dirs = Arc::new(AtomicU64::new(1)); // the root itself
+    let newest_mtime = Arc::new(AtomicU64::new(0));
+    let newest_atime = Arc::new(AtomicU64::new(0));
+    let partial = Arc::new(AtomicBool::new(false));
 
     let walker = jwalk::WalkDirGeneric::<((), ())>::new(path)
         .parallelism(parallelism)
@@ -135,6 +158,7 @@ pub fn measure(path: &Path, links: &LinkTracker, opts: &WalkOptions) -> Measurem
     for entry in walker {
         let entry = match entry {
             Ok(e) => e,
+            Err(e) if e.is_busy() => return None,
             Err(_) => {
                 // Permission denied or a directory removed mid-walk. Record that the
                 // total is a floor rather than silently reporting a wrong number.
@@ -184,7 +208,7 @@ pub fn measure(path: &Path, links: &LinkTracker, opts: &WalkOptions) -> Measurem
         }
     }
 
-    Measurement {
+    Some(Measurement {
         size: Size {
             logical: logical.load(Ordering::Relaxed),
             on_disk: on_disk.load(Ordering::Relaxed),
@@ -195,7 +219,7 @@ pub fn measure(path: &Path, links: &LinkTracker, opts: &WalkOptions) -> Measurem
         },
         newest_mtime: to_system_time(newest_mtime.load(Ordering::Relaxed)),
         newest_atime: to_system_time(newest_atime.load(Ordering::Relaxed)),
-    }
+    })
 }
 
 /// A candidate whose path is a single file rather than a tree, e.g. an AVD `.ini`.
@@ -324,7 +348,7 @@ fn to_system_time(secs: u64) -> Option<SystemTime> {
 }
 
 #[cfg(unix)]
-fn blocks_of(meta: &std::fs::Metadata) -> u64 {
+pub(crate) fn blocks_of(meta: &std::fs::Metadata) -> u64 {
     use std::os::unix::fs::MetadataExt;
     // st_blocks is always in 512-byte units by POSIX definition, regardless of
     // the filesystem's own block size.
@@ -332,29 +356,29 @@ fn blocks_of(meta: &std::fs::Metadata) -> u64 {
 }
 
 #[cfg(not(unix))]
-fn blocks_of(meta: &std::fs::Metadata) -> u64 {
+pub(crate) fn blocks_of(meta: &std::fs::Metadata) -> u64 {
     meta.len()
 }
 
 #[cfg(unix)]
-fn device_of(meta: &std::fs::Metadata) -> u64 {
+pub(crate) fn device_of(meta: &std::fs::Metadata) -> u64 {
     use std::os::unix::fs::MetadataExt;
     meta.dev()
 }
 
 #[cfg(not(unix))]
-fn device_of(_meta: &std::fs::Metadata) -> u64 {
+pub(crate) fn device_of(_meta: &std::fs::Metadata) -> u64 {
     0
 }
 
 #[cfg(unix)]
-fn identity_of(meta: &std::fs::Metadata) -> (u64, u64, u64) {
+pub(crate) fn identity_of(meta: &std::fs::Metadata) -> (u64, u64, u64) {
     use std::os::unix::fs::MetadataExt;
     (meta.dev(), meta.ino(), meta.nlink())
 }
 
 #[cfg(not(unix))]
-fn identity_of(_meta: &std::fs::Metadata) -> (u64, u64, u64) {
+pub(crate) fn identity_of(_meta: &std::fs::Metadata) -> (u64, u64, u64) {
     (0, 0, 1)
 }
 
@@ -397,6 +421,32 @@ mod tests {
     /// on the walk, so the nested request starved, burned the 5s `busy_timeout`
     /// and returned zeroes with `partial` set — a silent wrong answer, reported to
     /// the user as "0 B reclaimable".
+    /// Regression: with every pool worker busy, jwalk abandons the walk before
+    /// reading anything. That must fall back to a full serial walk, not a
+    /// near-zero size. A one-thread pool that is itself waiting on the walk is
+    /// the deterministic way to make the pool "busy".
+    #[test]
+    fn a_walk_that_cannot_get_a_pool_worker_is_measured_serially() {
+        let tmp = TempDir::new().unwrap();
+        write(&tmp.path().join("a.bin"), 4096);
+        write(&tmp.path().join("sub/b.bin"), 8192);
+
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+        let opts = WalkOptions {
+            threads: 0,
+            busy_timeout: std::time::Duration::from_millis(50),
+            ..Default::default()
+        };
+        let m = pool.install(|| measure(tmp.path(), &LinkTracker::new(), &opts));
+
+        assert_eq!(m.size.files, 2);
+        assert_eq!(m.size.logical, 4096 + 8192);
+        assert!(!m.size.partial);
+    }
+
     #[test]
     fn a_single_threaded_walk_measures_the_same_bytes_as_a_parallel_one() {
         let tmp = TempDir::new().unwrap();

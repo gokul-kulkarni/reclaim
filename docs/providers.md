@@ -109,6 +109,18 @@ corrupts the installation.
 | `system.*` | `brew cleanup -s`, Nix GC, `~/Library/Logs` | Nix `-d` also deletes old profile generations, so rollback stops being possible. |
 | `ml.*` | Hugging Face, PyTorch hub, Ollama and LM Studio model caches; ComfyUI, SillyTavern and Automatic1111 model/output/cache directories | **Disabled by default** — model weights are deliberate, very large downloads. Enable by removing `"ml"` from `providers.disabled`. ComfyUI, SillyTavern and Automatic1111 are found the same way project artifacts are — via the project walk, refined by a marker file unique to that tool (`.comfy_environment`, `public/scripts/world-info.js`, `webui.py` + `modules/paths_internal.py`). When a tool's default port answers right now, its candidates carry an extra warning that files may be in active use (`providers.ai.check_running`). |
 
+## Large files — `files.large`
+
+| Item | Tier | Comes back | Notes |
+|---|---|---|---|
+| Any regular file ≥ `providers.files.min_size` (500 MB) under `~` | **caution** | **never** | Labelled with a guessed type — `Video · talk.mov`, `Disk image · Xcode.xip`, `Archive · backup.zip`. Found by a separate walk of the home directory that runs alongside the project walk; it skips dot-directories, `scan.exclude`, every directory `reclaim scan` already understands, and **macOS packages** (`.app`, `.photoslibrary`, `.sparsebundle`, …), whose inner files must never be removed one by one. A file inside another candidate's directory is offered only by that candidate. Removal is always to the **Trash**, even under `--purge`, after a fresh `check_user_file` guard check. Disable with `disabled = ["files"]`. |
+
+## Unused apps — `apps.unused` (macOS)
+
+| Item | Tier | Comes back | Notes |
+|---|---|---|---|
+| An `.app` bundle in `/Applications` or `~/Applications` (or one folder below) not opened for `providers.apps.unused_days` (90) | **caution** | **re-download** from the App Store or the developer | "Last opened" is the later of Spotlight's `kMDItemLastUsedDate` (read with one batched `mdls` call) and the access time of the program files in `Contents/MacOS`. Reads within five minutes of the file being written are ignored, because that is the installer or Gatekeeper, not a launch. With neither, the app is aged from Spotlight's date added or the bundle's mtime, and labelled "never opened". The age shown and used for ranking is this date, never the bundle's file times: an auto-update rewrites those. Symlinked bundles (Safari, which lives on the sealed system volume) are skipped, as are web-app shortcuts made by Chrome-family browsers (their `Info.plist` carries `CrAppModeShortcutID`). Removal is always to the **Trash**, even under `--purge`, after a fresh `check_app` guard check, and is refused while the app is running. Settings in `~/Library` are left alone. Apps owned by root (App Store or `.pkg` installs) carry a note that macOS will ask for a password. Disable with `disabled = ["apps"]`. |
+
 ## Adding a provider
 
 One file in `crates/reclaim-providers/src/`, implementing `Provider`:

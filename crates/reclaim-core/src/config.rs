@@ -198,6 +198,8 @@ pub struct ProviderConfig {
     pub node: NodeOptions,
     pub containers: ContainerOptions,
     pub ai: AiOptions,
+    pub files: FileOptions,
+    pub apps: AppOptions,
 }
 
 impl Default for ProviderConfig {
@@ -211,6 +213,8 @@ impl Default for ProviderConfig {
             node: NodeOptions::default(),
             containers: ContainerOptions::default(),
             ai: AiOptions::default(),
+            files: FileOptions::default(),
+            apps: AppOptions::default(),
         }
     }
 }
@@ -283,6 +287,51 @@ impl Default for AiOptions {
     fn default() -> Self {
         Self {
             check_running: true,
+        }
+    }
+}
+
+/// The `files.large` scan: individual large files under the home directory.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FileOptions {
+    /// Only files at least this big on disk, e.g. `"500MB"`.
+    pub min_size: String,
+    /// At most this many, largest first. 0 means no limit.
+    pub limit: usize,
+    /// Descend into dot-directories other than known artifact ones.
+    pub include_hidden: bool,
+}
+
+impl Default for FileOptions {
+    fn default() -> Self {
+        Self {
+            min_size: "500MB".into(),
+            limit: crate::large_files::DEFAULT_LIMIT,
+            include_hidden: false,
+        }
+    }
+}
+
+impl FileOptions {
+    pub fn min_size_bytes(&self) -> Result<u64> {
+        format::parse_bytes(&self.min_size)
+            .map_err(|e| Error::Config(format!("providers.files.min_size: {e}")))
+    }
+}
+
+/// The `apps.unused` scan: installed applications not opened in a long time.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AppOptions {
+    /// Only apps not opened for at least this many days are offered.
+    pub unused_days: u32,
+}
+
+impl Default for AppOptions {
+    fn default() -> Self {
+        Self {
+            unused_days: crate::apps::DEFAULT_UNUSED_DAYS,
         }
     }
 }
@@ -397,6 +446,7 @@ impl Config {
     /// Reject configurations that would misbehave later, at load time.
     pub fn validate(&self, _paths: &Paths) -> Result<()> {
         self.thresholds.min_size_bytes()?;
+        self.providers.files.min_size_bytes()?;
 
         if self.scan.max_depth == 0 {
             return Err(Error::Config("scan.max_depth must be at least 1".into()));
@@ -518,6 +568,27 @@ mod tests {
         };
         let err = cfg.validate(&paths()).unwrap_err().to_string();
         assert!(err.contains("caution"), "{err}");
+    }
+
+    #[test]
+    fn the_unused_app_threshold_is_read_from_its_own_section() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "[providers.apps]\nunused_days = 30\n").unwrap();
+        let cfg = Config::load_from(&path, &paths()).unwrap();
+        assert_eq!(cfg.providers.apps.unused_days, 30);
+        assert_eq!(
+            Config::default().providers.apps.unused_days,
+            crate::apps::DEFAULT_UNUSED_DAYS
+        );
+    }
+
+    #[test]
+    fn an_invalid_large_file_threshold_is_rejected() {
+        let mut cfg = Config::default();
+        cfg.providers.files.min_size = "huge".into();
+        let err = cfg.validate(&paths()).unwrap_err().to_string();
+        assert!(err.contains("providers.files.min_size"), "{err}");
     }
 
     #[test]

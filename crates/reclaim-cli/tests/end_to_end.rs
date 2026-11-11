@@ -521,3 +521,143 @@ fn nothing_outside_the_root_is_ever_touched() {
     assert!(victim.exists(), "a file outside --root must be untouched");
     assert_eq!(std::fs::metadata(&victim).unwrap().len(), 1_000_000);
 }
+
+#[test]
+fn large_lists_big_files_and_skips_caches_and_artifacts() {
+    let sandbox = Sandbox::populated();
+    sandbox
+        .file("Movies/talk-recording.mov", 3_000_000)
+        .file("Downloads/notes.txt", 1_000);
+
+    let output = sandbox
+        .cmd()
+        .args(["large", "--min-size", "1MB", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    let paths: Vec<&str> = json["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths.len(), 1, "only the recording qualifies: {paths:?}");
+    assert!(paths[0].ends_with("Movies/talk-recording.mov"));
+    assert!(
+        sandbox.path("Movies/talk-recording.mov").exists(),
+        "listing must never delete"
+    );
+}
+
+#[test]
+fn large_accepts_an_explicit_directory_and_prints_a_table() {
+    let sandbox = Sandbox::new();
+    sandbox
+        .file("Downloads/installer.dmg", 2_000_000)
+        .file("Movies/clip.mp4", 2_000_000);
+
+    sandbox
+        .cmd()
+        .args(["large", "--min-size", "1MB"])
+        .arg(sandbox.path("Downloads"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("installer.dmg"))
+        .stdout(predicate::str::contains("disk image"))
+        .stdout(predicate::str::contains("clip.mp4").not());
+}
+
+#[test]
+fn large_trash_refuses_to_run_without_a_terminal() {
+    let sandbox = Sandbox::new();
+    sandbox.file("Downloads/installer.dmg", 2_000_000);
+
+    sandbox
+        .cmd()
+        .args(["large", "--min-size", "1MB", "--trash"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("interactive terminal"));
+    assert!(sandbox.path("Downloads/installer.dmg").exists());
+}
+
+/// An app bundle in the sandbox's `~/Applications`, its folder dated `days` ago.
+/// Spotlight does not index temporary directories, so that date is the only
+/// usage evidence the run will find.
+#[cfg(target_os = "macos")]
+fn installed_app(sandbox: &Sandbox, name: &str, days: u64) -> PathBuf {
+    let rel = format!("Applications/{name}.app");
+    sandbox.file(&format!("{rel}/Contents/Resources/data"), 200_000);
+    let app = sandbox.path(&rel);
+    let then = std::time::SystemTime::now() - std::time::Duration::from_secs(days * 86_400);
+    std::fs::File::open(&app)
+        .unwrap()
+        .set_modified(then)
+        .unwrap();
+    app
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn apps_lists_installed_apps_least_recently_used_first() {
+    let sandbox = Sandbox::new();
+    installed_app(&sandbox, "Fresh", 1);
+    installed_app(&sandbox, "Forgotten", 400);
+
+    let output = sandbox.cmd().args(["apps", "--json"]).output().unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    let names: Vec<&str> = json["apps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["Forgotten", "Fresh"]);
+    assert_eq!(json["apps"][0]["idle_days"], 400);
+    assert!(json["apps"][0]["on_disk"].as_u64().unwrap() >= 200_000);
+
+    sandbox
+        .cmd()
+        .args(["apps", "--unused", "90d"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Forgotten"))
+        .stdout(predicate::str::contains("Fresh").not());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn unused_apps_appear_in_a_scan_and_a_dry_run_leaves_them_installed() {
+    let sandbox = Sandbox::new();
+    let app = installed_app(&sandbox, "Forgotten", 400);
+    installed_app(&sandbox, "Fresh", 1);
+
+    sandbox
+        .cmd()
+        .args(["scan", "--group", "apps"])
+        .args(PERMISSIVE)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Unused apps"))
+        .stdout(predicate::str::contains("Forgotten"))
+        .stdout(predicate::str::contains("Fresh").not());
+
+    sandbox
+        .cmd()
+        .args([
+            "clean",
+            "--group",
+            "apps",
+            "--tier",
+            "caution",
+            "--dry-run",
+            "--yes",
+        ])
+        .args(PERMISSIVE)
+        .assert()
+        .success();
+    assert!(app.exists(), "a dry run must leave the app installed");
+}

@@ -94,6 +94,9 @@ reclaim scan                            # plain report, deletes nothing
 reclaim scan --json                      # machine-readable
 reclaim clean --tier safe --yes          # remove regenerable caches
 reclaim clean --older-than 90d --dry-run # only long-untouched things, report only
+reclaim large                            # biggest individual files in your home folder
+reclaim large ~/Downloads --trash        # pick large files to move to the Trash, one by one
+reclaim apps                             # installed apps, by when you last opened them
 reclaim ui                               # rich web UI on localhost
 reclaim history                          # what previous runs did
 reclaim history report --open            # detailed HTML report: trends, by ecosystem, failures
@@ -116,6 +119,67 @@ drawer. It binds `127.0.0.1` only, requires a token minted per process, rejects
 cross-site origins, and dies with the command. It can select and delete, exactly
 like the terminal UI. A History tab tracks lifetime totals, a trend over every
 run, a breakdown by ecosystem and trigger, and any failures worth investigating.
+
+### Large files
+
+Every scan — the terminal UI, `reclaim scan` and the web UI — also shows a
+**Large files** group: individual files of 500 MB or more under your home
+folder, each labelled with its type (`Video · talk.mov`, `Disk image ·
+Xcode.xip`, `Archive · backup.zip`). They are always caution tier, so bulk
+selection and `clean --tier safe` never pick them, and removing one always moves
+it to the Trash, whatever the delete mode. macOS packages such as Photos or
+iMovie libraries and `.app` bundles are treated as a single unit and never
+opened up file by file. Tune it under `[providers.files]`, or turn it off with
+`disabled = ["files"]` — the extra walk of your home folder adds a few seconds
+to each scan.
+
+`reclaim large` is the same search as a standalone command: *which single files
+are eating my disk?* It lists every
+file at or above `--min-size` (default 500 MB), largest first, with a kind
+(video, disk image, archive, model…), when it was last modified, and a note when
+it is hardlinked or sparse (so deleting it frees less than it appears to).
+
+```sh
+reclaim large                                 # top 50 files ≥ 500 MB under ~
+reclaim large ~/Movies ~/Downloads --min-size 2GB
+reclaim large --older-than 6mo --limit 0      # every big file untouched for six months
+reclaim large --include-hidden                # also look inside dot-directories
+reclaim large --json                          # machine-readable
+```
+
+Directories `reclaim scan` already understands (`node_modules`, `target`,
+`.venv`, `.git`, …) and `scan.exclude` globs are skipped. Listing never deletes.
+With `--trash` it walks the list asking about each file (`y` / `n` / `q`); only
+files you answer `y` to are moved to the **Trash** — never purged — and the run
+is journalled like any other. `--trash` refuses to run without a terminal, and
+`--trash --dry-run` asks the questions but moves nothing.
+
+### Unused apps (macOS)
+
+Every scan also shows an **Unused apps** group: apps in `/Applications` and
+`~/Applications` that you have not opened for 90 days or more, with their size
+and when each was last opened. That date is the later of Spotlight's record
+(what Finder's "Last opened" column shows) and the last time the app's program
+was launched. Spotlight misses apps started at login or from a terminal, and it
+forgets everything after a migration. An app with no record of ever being
+opened is aged from when it was installed, and is marked "never opened".
+Like large files, apps are always caution tier and only ever moved to the
+Trash, whatever the delete mode. An app that is running right now is refused.
+Moving an app leaves its settings in `~/Library` alone. Apps installed for all
+users (most App Store apps) make macOS ask for your password. Change the
+threshold under `[providers.apps]`, or turn the group off with
+`disabled = ["apps"]`.
+
+`reclaim apps` lists every installed app, not just the unused ones. Web-app
+shortcuts made by Chrome, Edge, Brave and similar browsers are not counted as apps. It only lists
+and never removes anything.
+
+```sh
+reclaim apps                      # least recently opened first
+reclaim apps --unused 6mo         # only apps unopened for six months or more
+reclaim apps --sort size          # largest first (also: --sort name)
+reclaim apps --json               # machine-readable
+```
 
 ## How it decides
 
@@ -147,6 +211,13 @@ is the largest single item on disk.
 - Refuses `$HOME` itself, `/`, system directories, `~/.ssh`, `~/Documents`,
   anything containing a `.git` component, anything outside the allowed roots, and
   anything you add to `delete.protected_paths`. There is no `--force` past this.
+  The single exception is `reclaim large --trash`: a regular file you explicitly
+  approve may be moved to the Trash from `~/Downloads`, `~/Movies` and the other
+  personal folders. Directories, symlinks, credential stores, `.git` contents and
+  your protected paths are still refused there. Unused apps get their own
+  narrow check too: only a real `.app` bundle, not a symlink, sitting directly
+  in `/Applications` or `~/Applications` (or one folder below), moved to the
+  Trash and never while it is running.
 - Default delete mode is **tiered**: `safe` items are purged so the space is
   actually freed; anything riskier goes to the Trash so it is recoverable.
   `--trash` / `--purge` override per run.

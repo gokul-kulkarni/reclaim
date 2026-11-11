@@ -31,6 +31,8 @@ pub struct Paths {
     android_sdk: Option<PathBuf>,
     android_avd: PathBuf,
     tmpdir: Option<PathBuf>,
+    /// Folders holding installed `.app` bundles. Empty off macOS.
+    app_dirs: Vec<PathBuf>,
     sandboxed: bool,
 }
 
@@ -61,6 +63,11 @@ impl Paths {
                 .or(base.android_sdk),
             android_avd: env("ANDROID_AVD_HOME").unwrap_or(base.android_avd),
             tmpdir: env("TMPDIR"),
+            app_dirs: if cfg!(target_os = "macos") {
+                vec![PathBuf::from("/Applications"), home.join("Applications")]
+            } else {
+                Vec::new()
+            },
             sandboxed: false,
             home,
         })
@@ -104,6 +111,13 @@ impl Paths {
             gopath,
             cache_dir,
             tmpdir: None,
+            // Only the sandbox's own `~/Applications`: a test or `--root` run
+            // must never offer the machine's real `/Applications`.
+            app_dirs: if cfg!(target_os = "macos") {
+                vec![home.join("Applications")]
+            } else {
+                Vec::new()
+            },
             sandboxed: true,
             home,
         }
@@ -185,6 +199,18 @@ impl Paths {
 
     pub fn tmpdir(&self) -> Option<&Path> {
         self.tmpdir.as_deref()
+    }
+
+    /// Where installed applications live: `/Applications` and `~/Applications`
+    /// on macOS, nothing elsewhere.
+    pub fn app_dirs(&self) -> &[PathBuf] {
+        &self.app_dirs
+    }
+
+    /// Point the application folders somewhere else, for tests.
+    pub fn with_app_dirs(mut self, dirs: Vec<PathBuf>) -> Self {
+        self.app_dirs = dirs;
+        self
     }
 
     /// Override a base directory. Lets tests point one toolchain at the sandbox
