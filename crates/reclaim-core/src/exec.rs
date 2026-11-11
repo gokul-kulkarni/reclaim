@@ -802,6 +802,17 @@ mod tests {
         );
     }
 
+    /// A fixture whose guard treats `<home>/Applications` as an application
+    /// folder on every platform, not only on macOS where `Paths` adds it.
+    fn app_fixture() -> Fixture {
+        let f = fixture();
+        let paths = Paths::with_home(&f.home).with_app_dirs(vec![f.home.join("Applications")]);
+        Fixture {
+            guard: PathGuard::new(&paths),
+            ..f
+        }
+    }
+
     fn app(path: &Path) -> Candidate {
         crate::apps::to_candidate(&crate::apps::InstalledApp {
             path: path.to_path_buf(),
@@ -816,7 +827,7 @@ mod tests {
     fn an_app_candidate_goes_through_the_app_check_even_under_purge() {
         // ~/Applications is protected from the cache check, so DryRun (not
         // Failed) proves the candidate was routed through check_app.
-        let f = fixture();
+        let f = app_fixture();
         let bundle = make_tree(&f.home, "Applications/Old.app/Contents", 512);
         let bundle = bundle.parent().unwrap().to_path_buf();
         let opts = CleanOptions {
@@ -831,7 +842,7 @@ mod tests {
 
     #[test]
     fn an_app_candidate_outside_the_applications_folders_is_refused() {
-        let f = fixture();
+        let f = app_fixture();
         let stray = make_tree(&f.home, "Downloads/Old.app", 512);
 
         let record = clean(&[app(&stray)], &f.guard, &purge_opts(), None);
@@ -841,7 +852,7 @@ mod tests {
 
     #[test]
     fn an_already_removed_app_is_skipped() {
-        let f = fixture();
+        let f = app_fixture();
         let gone = f.home.join("Applications/Gone.app");
         let record = clean(&[app(&gone)], &f.guard, &purge_opts(), None);
         assert_eq!(record.items[0].disposition, Disposition::Skipped);

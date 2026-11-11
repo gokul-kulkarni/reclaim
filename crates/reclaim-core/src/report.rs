@@ -145,12 +145,14 @@ impl HistoryReport {
                 });
             }
 
-            let trigger_entry = by_trigger.entry(record.trigger).or_insert_with(|| TriggerStats {
-                trigger: record.trigger,
-                label: record.trigger.label().to_string(),
-                runs: 0,
-                freed: 0,
-            });
+            let trigger_entry = by_trigger
+                .entry(record.trigger)
+                .or_insert_with(|| TriggerStats {
+                    trigger: record.trigger,
+                    label: record.trigger.label().to_string(),
+                    runs: 0,
+                    freed: 0,
+                });
             trigger_entry.runs += 1;
             trigger_entry.freed += freed;
 
@@ -301,7 +303,12 @@ mod tests {
                 2,
                 Trigger::Cli,
                 true,
-                vec![item(Group::Rust, Tier::Safe, Disposition::DryRun, 9_000_000)],
+                vec![item(
+                    Group::Rust,
+                    Tier::Safe,
+                    Disposition::DryRun,
+                    9_000_000,
+                )],
             ),
         ];
 
@@ -309,7 +316,10 @@ mod tests {
         assert_eq!(report.runs, 2);
         assert_eq!(report.real_runs, 1);
         assert_eq!(report.dry_runs, 1);
-        assert_eq!(report.lifetime_freed, 1000, "trashed and dry-run bytes must not count as freed");
+        assert_eq!(
+            report.lifetime_freed, 1000,
+            "trashed and dry-run bytes must not count as freed"
+        );
         assert_eq!(report.lifetime_trashed, 5000);
     }
 
@@ -351,7 +361,10 @@ mod tests {
         // Passed in reverse (as Journal::read_recent would return them).
         let report = HistoryReport::build(&records);
         assert_eq!(report.timeline.len(), 2);
-        assert_eq!(report.timeline[0].started_at, records[1].started_at, "oldest first");
+        assert_eq!(
+            report.timeline[0].started_at, records[1].started_at,
+            "oldest first"
+        );
         assert_eq!(report.timeline[0].cumulative_freed, 50);
         assert_eq!(report.timeline[1].cumulative_freed, 150);
     }
@@ -359,8 +372,18 @@ mod tests {
     #[test]
     fn failures_are_collected_across_runs_newest_first() {
         let records = vec![
-            run_at(1, Trigger::Scheduled, false, vec![failed_item("a", "permission denied")]),
-            run_at(2, Trigger::Scheduled, false, vec![failed_item("b", "not found")]),
+            run_at(
+                1,
+                Trigger::Scheduled,
+                false,
+                vec![failed_item("a", "permission denied")],
+            ),
+            run_at(
+                2,
+                Trigger::Scheduled,
+                false,
+                vec![failed_item("b", "not found")],
+            ),
         ];
 
         let report = HistoryReport::build(&records);
@@ -380,7 +403,10 @@ mod tests {
         let report = HistoryReport::build(&records);
         assert_eq!(report.top_items.len(), TOP_ITEMS_LIMIT);
         assert_eq!(report.top_items[0].bytes, 190, "largest first");
-        assert!(report.top_items.windows(2).all(|w| w[0].bytes >= w[1].bytes));
+        assert!(report
+            .top_items
+            .windows(2)
+            .all(|w| w[0].bytes >= w[1].bytes));
     }
 
     #[test]

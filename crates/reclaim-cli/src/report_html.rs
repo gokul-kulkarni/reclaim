@@ -62,7 +62,11 @@ fn write_stats(out: &mut String, report: &HistoryReport) {
         "",
     );
     stat_card(out, "Real runs", &thousands(report.real_runs as u64), "");
-    let failed_class = if report.failed_items > 0 { "caution" } else { "" };
+    let failed_class = if report.failed_items > 0 {
+        "caution"
+    } else {
+        ""
+    };
     stat_card(
         out,
         "Failed items",
@@ -105,7 +109,8 @@ fn write_timeline(out: &mut String, report: &HistoryReport) {
         .max(1) as f64;
 
     let x = |t: f64| CHART_PAD + (t - t0) / span * (CHART_W - 2.0 * CHART_PAD);
-    let y = |v: u64| CHART_H - CHART_PAD - (v as f64 / max_cumulative) * (CHART_H - 2.0 * CHART_PAD);
+    let y =
+        |v: u64| CHART_H - CHART_PAD - (v as f64 / max_cumulative) * (CHART_H - 2.0 * CHART_PAD);
 
     let mut path = String::new();
     let mut area = String::new();
@@ -246,7 +251,9 @@ fn write_top_item_row(out: &mut String, item: &TopItem) {
 fn write_failures(out: &mut String, report: &HistoryReport) {
     out.push_str("<section><h2>Failures</h2>");
     if report.failures.is_empty() {
-        out.push_str("<p class=\"dim\">No failures recorded. Nothing to investigate.</p></section>");
+        out.push_str(
+            "<p class=\"dim\">No failures recorded. Nothing to investigate.</p></section>",
+        );
         return;
     }
     out.push_str("<table><thead><tr><th>When</th><th>What</th><th>Provider</th><th>Error</th></tr></thead><tbody>");

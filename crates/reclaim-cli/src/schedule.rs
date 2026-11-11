@@ -17,6 +17,7 @@ use crate::app::App;
 use crate::cli::{ScheduleAction, ScheduleInstallArgs};
 use crate::render::Style;
 
+#[cfg(target_os = "macos")]
 const LABEL: &str = "dev.reclaim.cleanup";
 
 /// When a scheduled run fires, normalised from the config's `cadence`.

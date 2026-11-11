@@ -10,7 +10,9 @@ use reclaim_core::model::Candidate;
 use reclaim_core::report::HistoryReport;
 
 use crate::app::{App, Purpose};
-use crate::cli::{CleanArgs, ConfigAction, HistoryAction, HistoryArgs, HistoryReportArgs, ScanArgs};
+use crate::cli::{
+    CleanArgs, ConfigAction, HistoryAction, HistoryArgs, HistoryReportArgs, ScanArgs,
+};
 use crate::render::{self, Style};
 
 pub fn scan(app: &App, args: &ScanArgs, style: &Style) -> Result<()> {
@@ -223,7 +225,11 @@ pub fn history(app: &App, args: &HistoryArgs, style: &Style) -> Result<()> {
 fn history_report(app: &App, args: &HistoryReportArgs) -> Result<()> {
     // 0 means "every run"; read_recent's own `0` would mean "none", so this is
     // resolved here rather than teaching the journal a second meaning for 0.
-    let limit = if args.last == 0 { usize::MAX } else { args.last };
+    let limit = if args.last == 0 {
+        usize::MAX
+    } else {
+        args.last
+    };
     let records = app.journal.read_recent(limit);
 
     let report = HistoryReport::build(&records);

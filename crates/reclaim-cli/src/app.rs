@@ -91,8 +91,15 @@ impl App {
 
         let (tx, rx) = mpsc::channel();
         std::thread::scope(|scope| {
-            let handle = scope
-                .spawn(|| pipeline::scan(&self.providers, &self.paths, &self.config, filter, Some(&tx)));
+            let handle = scope.spawn(|| {
+                pipeline::scan(
+                    &self.providers,
+                    &self.paths,
+                    &self.config,
+                    filter,
+                    Some(&tx),
+                )
+            });
             report_scan_progress(&rx);
             handle.join().expect("scan thread panicked")
         })

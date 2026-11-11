@@ -681,7 +681,9 @@ mod tests {
         assert!(!is_running(&app));
     }
 
-    #[cfg(unix)]
+    /// macOS only: Linux `ps` reports a program's name, not its path, and
+    /// application bundles only exist on macOS anyway.
+    #[cfg(target_os = "macos")]
     #[test]
     fn a_process_launched_from_inside_a_bundle_counts_as_running() {
         let tmp = TempDir::new().unwrap();

@@ -205,9 +205,21 @@ fn sillytavern_candidates(ctx: &ScanContext) -> Vec<Candidate> {
         }
 
         for (id, label, rel) in [
-            ("ml.sillytavern-cache", "SillyTavern content cache", "data/_cache"),
-            ("ml.sillytavern-cache", "SillyTavern webpack cache", "data/_webpack"),
-            ("ml.sillytavern-cache", "SillyTavern upload cache", "data/_uploads"),
+            (
+                "ml.sillytavern-cache",
+                "SillyTavern content cache",
+                "data/_cache",
+            ),
+            (
+                "ml.sillytavern-cache",
+                "SillyTavern webpack cache",
+                "data/_webpack",
+            ),
+            (
+                "ml.sillytavern-cache",
+                "SillyTavern upload cache",
+                "data/_uploads",
+            ),
         ] {
             if let Some(c) =
                 project_artifact(id, Group::Ml, label, &project.path, project.path.join(rel))
@@ -407,7 +419,11 @@ mod tests {
             .filter(|c| c.provider == "ml.sillytavern-thumbnails")
             .flat_map(|c| c.paths.clone())
             .collect();
-        assert_eq!(thumb_paths.len(), 2, "one candidate per profile: {found:#?}");
+        assert_eq!(
+            thumb_paths.len(),
+            2,
+            "one candidate per profile: {found:#?}"
+        );
     }
 
     #[test]
