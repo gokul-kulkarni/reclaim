@@ -107,7 +107,8 @@ reclaim schedule install --cadence weekly
 
 Grouped by ecosystem, sizes filling in live as they are measured.
 `space` selects, `a` selects everything safe, `enter` shows the full evidence for
-an item, `d` reclaims, `p` toggles dry-run, `?` for keys.
+an item, `d` reclaims, `p` toggles dry-run, `?` for keys. While a clean runs it
+shows progress, then the results (see [Watching a clean](#watching-a-clean)).
 
 ### The web UI
 
@@ -119,6 +120,55 @@ drawer. It binds `127.0.0.1` only, requires a token minted per process, rejects
 cross-site origins, and dies with the command. It can select and delete, exactly
 like the terminal UI. A History tab tracks lifetime totals, a trend over every
 run, a breakdown by ecosystem and trigger, and any failures worth investigating.
+
+### Watching a clean
+
+All three front ends show a clean as it runs, then show what happened.
+
+- **While it runs:** item n of N, the space freed so far, the space sent to
+  the Trash, any failures, the item being removed now, and each item's result
+  as it finishes.
+  - `reclaim clean` draws a live progress line on stderr. It never writes to
+    stdout, so `--json` stays parseable.
+  - The terminal UI shows a progress screen. Keys are ignored until the run
+    ends; `ctrl-c` abandons it.
+  - The web UI shows a progress panel.
+- **When it ends:** the results are grouped by what happened to each item.
+  - The groups are: **failed** (listed first, with the reason), **deleted**,
+    **cleaned by a command**, **moved to the Trash** and **already gone**. A
+    dry run shows a single group: **would be reclaimed**.
+  - Each item shows its size, and either its path or the command that cleaned
+    it, such as ran `ollama rm llama3.2:latest`.
+  - The totals keep **freed now** apart from **in the Trash**. Trashed files
+    still use disk until you empty the Trash.
+
+A real `reclaim clean --yes --purge`, run against a test home folder with an
+unwritable pip cache:
+
+```text
+Failed · 1 item(s) · 3.82 MB
+  Nothing was removed for these items.
+    3.82 MB  pip download cache
+             ~/Library/Caches/pip
+             io error at /Users/you/Library/Caches/pip: Permission denied (os error 13)
+
+Deleted · 2 item(s) · 29.6 MB
+  Permanently deleted. The space is free now.
+    22.9 MB  Gradle caches
+             ~/.gradle/caches
+    6.68 MB  npm cache
+             ~/.npm
+
+Freed now: 29.6 MB · 1 failed
+```
+
+In the terminal UI, the arrow keys or `j`/`k` scroll the results, and any other
+key closes them. The web UI rescans only after you close its results panel, so
+the list doesn't change while you read them.
+
+Scripts can follow a web clean too. `POST /api/clean?stream=true` returns one
+JSON object per line: `started`, then `item_started` and `item_finished` for
+each item, then `finished` with the full result.
 
 ### Large files
 
