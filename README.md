@@ -125,6 +125,8 @@ run, a breakdown by ecosystem and trigger, and any failures worth investigating.
 
 All three front ends show a clean as it runs, then show what happened.
 
+![the terminal UI reclaiming 577 MB from 20 items: a progress bar, space freed so far, and each item's result as it finishes, then the results grouped by outcome with each item's path](docs/demo-clean.gif)
+
 - **While it runs:** item n of N, the space freed so far, the space sent to
   the Trash, any failures, the item being removed now, and each item's result
   as it finishes.
