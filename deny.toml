@@ -3,6 +3,11 @@
 
 [advisories]
 yanked = "deny"
+ignore = [
+    # `paste` is unmaintained but sound, and only reaches us as a build-time
+    # proc-macro of ratatui 0.29. Drop this once ratatui no longer pulls it in.
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained build-time macro, transitive via ratatui" },
+]
 
 [licenses]
 allow = [
