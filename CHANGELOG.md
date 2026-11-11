@@ -47,6 +47,15 @@ while the project is pre-1.0, breaking changes may land in a minor bump.
 
 ### Changed
 
+- **Ollama models are offered one by one.** `ml.ollama` used to offer
+  `~/.ollama/models` as a single item. It now reads Ollama's manifests and
+  offers each installed model separately, labelled as `ollama list` shows it
+  (`llama3.2:latest`). A model's size counts only the layers no other installed
+  model uses; a model sharing a layer gets a warning naming the shared amount.
+  Removal runs `ollama rm <model>` instead of deleting files, and a model
+  currently loaded (`ollama ps`) carries its own warning when
+  `providers.ai.check_running` is on. Still disabled by default with the rest
+  of the `ml` group.
 - Large-file search treats macOS packages (`.app`, `.photoslibrary`,
   `.imovielibrary`, `.sparsebundle`, …) as opaque, so a file inside a Photos
   library is never offered on its own.
