@@ -3,7 +3,7 @@
 All notable changes to `reclaim`. Versions follow [semver](https://semver.org);
 while the project is pre-1.0, breaking changes may land in a minor bump.
 
-## Unreleased
+## 0.1.7 — 2026-11-11
 
 ### Changed
 
