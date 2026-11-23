@@ -55,6 +55,7 @@ full scan of the home directory above — 44 candidates, 10 GB of results — ta
 **Homebrew** (macOS or Linux, Intel or ARM):
 
 ```sh
+brew trust gokul-kulkarni/tap        # once: Homebrew asks you to trust third-party taps
 brew install gokul-kulkarni/tap/reclaim
 ```
 

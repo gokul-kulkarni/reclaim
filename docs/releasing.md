@@ -109,6 +109,7 @@ After the first release, verify it end to end from a clean shell:
 
 ```sh
 brew tap gokul-kulkarni/tap
+brew trust gokul-kulkarni/tap
 brew install reclaim
 brew test reclaim
 reclaim --version
